@@ -1,16 +1,14 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::iter::Peekable;
-use std::ops::DerefMut;
 use std::str::Chars;
 
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
-use inkwell::types::BasicMetadataTypeEnum;
 use inkwell::values::{BasicMetadataValueEnum, FloatValue, FunctionValue, PointerValue};
-use inkwell::FloatPredicate;
+use inkwell::AddressSpace;
 
 use Token::*;
 
@@ -23,11 +21,14 @@ const ANONYMOUS_FUNCTION_NAME: &str = "anonymous";
 /// Represents a primitive syntax token.
 #[derive(Debug, Clone)]
 pub enum Token {
+    Arrow,
     Binary,
     Comma,
     Comment,
     Def,
+    StringLiteral(String),
     Else,
+    End,
     EOF,
     Extern,
     For,
@@ -38,9 +39,11 @@ pub enum Token {
     Number(f64),
     Op(char),
     RParen,
+    Semicolon,
     Then,
     Unary,
     Var,
+    Whitespace,
 }
 
 /// Defines an error encountered by the `Lexer`.
@@ -85,126 +88,154 @@ impl<'a> Lexer<'a> {
 
     /// Lexes and returns the next `Token` from the source code.
     pub fn lex(&mut self) -> LexResult {
-        let chars = self.chars.deref_mut();
-        let src = self.input;
-
         let mut pos = self.pos;
-
-        // Skip whitespaces
-        loop {
-            // Note: the following lines are in their own scope to
-            // limit how long 'chars' is borrowed, and in order to allow
-            // it to be borrowed again in the loop by 'chars.next()'.
-            {
-                let ch = chars.peek();
-
-                if ch.is_none() {
-                    self.pos = pos;
-
-                    return Ok(Token::EOF);
-                }
-
-                if !ch.unwrap().is_whitespace() {
-                    break;
-                }
-            }
-
-            chars.next();
-            pos += 1;
-        }
-
+        let src = self.input;
         let start = pos;
-        let next = chars.next();
 
-        if next.is_none() {
-            return Ok(Token::EOF);
-        }
+        let ch = match self.chars.next() {
+            Some(ch) => ch,
+            None => return Ok(Token::EOF)
+        };
 
         pos += 1;
 
         // Actually get the next token.
-        let result = match next.unwrap() {
-            '(' => Ok(Token::LParen),
-            ')' => Ok(Token::RParen),
-            ',' => Ok(Token::Comma),
+        let result = match ch {
+            ' ' => Token::Whitespace,
+            '\n' => Token::Whitespace,
+            ';' => Token::Semicolon,
+            '(' => Token::LParen,
+            ')' => Token::RParen,
+            ',' => Token::Comma,
 
-            '#' => {
-                // Comment
+            // '#' => {
+            //     // Comment
+            //     loop {
+            //         let ch = self.chars.next();
+            //         pos += 1;
+
+            //         if ch == Some('\n') {
+            //             break;
+            //         }
+            //     }
+
+            //     Token::Comment
+            // },
+
+            '"' => {
                 loop {
-                    let ch = chars.next();
+                    let ch = self.chars.next();
                     pos += 1;
 
-                    if ch == Some('\n') {
-                        break;
-                    }
-                }
-
-                Ok(Token::Comment)
-            },
-
-            '.' | '0'..='9' => {
-                // Parse number literal
-                loop {
-                    let ch = match chars.peek() {
-                        Some(ch) => *ch,
-                        None => return Ok(Token::EOF),
+                    let ch = match ch {
+                        Some(ch) => ch,
+                        None => break,
                     };
 
-                    // Parse float.
-                    if ch != '.' && !ch.is_ascii_hexdigit() {
+                    if let '"' = ch {
                         break;
                     }
-
-                    chars.next();
-                    pos += 1;
                 }
 
-                Ok(Token::Number(src[start..pos].parse().unwrap()))
+                Token::StringLiteral(src[start + 1..pos - 1].to_string())
+            },
+
+
+            '1'..='9' => {
+                // Parse number literal
+                loop {
+                    let next_ch = match self.chars.peek() {
+                        Some(ch) => ch,
+                        None => break,
+                    };
+
+                    match next_ch {
+                        '0'..='9' => {
+                            self.chars.next();
+                            pos += 1;
+                        },
+                        '.' => {
+                            self.chars.next();
+                            pos += 1;
+                        },
+                        _ => { break }
+                    }
+                }
+
+                Token::Number(src[start..pos].parse().unwrap())
             },
 
             'a'..='z' | 'A'..='Z' | '_' => {
                 // Parse identifier
                 loop {
-                    let ch = match chars.peek() {
+                    let ch = match self.chars.peek() {
                         Some(ch) => *ch,
-                        None => return Ok(Token::EOF),
+                        None => break,
                     };
 
                     // A word-like identifier only contains underscores and alphanumeric characters.
-                    if ch != '_' && !ch.is_alphanumeric() {
+                    if ch != '_' && !(ch).is_alphanumeric() {
                         break;
                     }
 
-                    chars.next();
+                    self.chars.next();
                     pos += 1;
                 }
 
-                match &src[start..pos] {
-                    "def" => Ok(Token::Def),
-                    "extern" => Ok(Token::Extern),
-                    "if" => Ok(Token::If),
-                    "then" => Ok(Token::Then),
-                    "else" => Ok(Token::Else),
-                    "for" => Ok(Token::For),
-                    "in" => Ok(Token::In),
-                    "unary" => Ok(Token::Unary),
-                    "binary" => Ok(Token::Binary),
-                    "var" => Ok(Token::Var),
+                let src_ident = &src[start..pos];
 
-                    ident => Ok(Token::Ident(ident.to_string())),
+                match src_ident {
+                    "binary" => Token::Binary,
+                    "def" => Token::Def,
+                    "else" => Token::Else,
+                    "end" => Token::End,
+                    "extern" => Token::Extern,
+                    "for" => Token::For,
+                    "if" => Token::If,
+                    "in" => Token::In,
+                    "then" => Token::Then,
+                    "unary" => Token::Unary,
+                    "var" => Token::Var,
+                    ident => { Token::Ident(ident.to_string())},
                 }
             },
 
-            op => {
-                // Parse operator
-                Ok(Token::Op(op))
-            },
+            '-' => {
+                let next_chr = match self.chars.peek() {
+                    Some(ch) => *ch,
+                    None => return Ok(Token::Op('-')),
+                };
+
+                if next_chr != '>' {
+                    self.pos = pos;
+                    return Ok(Token::Op('-'));
+                }
+
+                self.chars.next();
+                pos += 1;
+
+                Token::Arrow
+            }
+
+            '>' => {
+                Token::Op('>')
+            }
+
+            _ => {
+                println!("NOT IMPL{:#?}", ch);
+                todo!()
+            }
+
+            // op => {
+            //     // Parse operator
+            //     Ok(Token::Op(op))
+            // },
         };
 
         // Update stored position, and return
         self.pos = pos;
 
-        result
+        Ok(result)
     }
 }
 
@@ -239,35 +270,50 @@ pub enum Expr {
         args: Vec<Expr>,
     },
 
-    Conditional {
-        cond: Box<Expr>,
-        consequence: Box<Expr>,
-        alternative: Box<Expr>,
-    },
+    // Conditional {
+    //     cond: Box<Expr>,
+    //     consequence: Box<Expr>,
+    //     alternative: Box<Expr>,
+    // },
 
-    For {
-        var_name: String,
-        start: Box<Expr>,
-        end: Box<Expr>,
-        step: Option<Box<Expr>>,
-        body: Box<Expr>,
-    },
+    // For {
+    //     var_name: String,
+    //     start: Box<Expr>,
+    //     end: Box<Expr>,
+    //     step: Option<Box<Expr>>,
+    //     body: Box<Expr>,
+    // },
 
     Number(f64),
 
+    InterpolableString(String),
+
     Variable(String),
 
-    VarIn {
-        variables: Vec<(String, Option<Expr>)>,
-        body: Box<Expr>,
-    },
+    // VarIn {
+    //     variables: Vec<(String, Option<Expr>)>,
+    //     body: Box<Expr>,
+    // },
+}
+
+#[derive(Debug)]
+pub enum BaseType {
+    StringType,
+    Void,
+    Undef
+}
+
+#[derive(Debug)]
+pub struct Arg {
+    pub name: String,
+    pub return_type: BaseType
 }
 
 /// Defines the prototype (name and parameters) of a function.
 #[derive(Debug)]
 pub struct Prototype {
     pub name: String,
-    pub args: Vec<String>,
+    pub args: Vec<Arg>,
     pub is_op: bool,
     pub prec: usize,
 }
@@ -276,6 +322,7 @@ pub struct Prototype {
 #[derive(Debug)]
 pub struct Function {
     pub prototype: Prototype,
+    pub return_type: Option<BaseType>,
     pub body: Option<Expr>,
     pub is_anon: bool,
 }
@@ -294,8 +341,20 @@ impl<'a> Parser<'a> {
     /// Creates a new parser, given an input `str` and a `HashMap` binding
     /// an operator and its precedence in binary expressions.
     pub fn new(input: String, op_precedence: &'a mut HashMap<char, i32>) -> Self {
+        let mut tokens = vec![];
         let mut lexer = Lexer::new(input.as_str());
-        let tokens = lexer.by_ref().collect();
+
+        loop {
+            let token = match lexer.next() {
+                Some(token) => token,
+                None => break
+            };
+
+            match token {
+                Whitespace => {},
+                _ => tokens.push(token)
+            }
+        }
 
         Parser {
             tokens,
@@ -334,7 +393,7 @@ impl<'a> Parser<'a> {
     /// indicates that the end of the file has been unexpectedly reached if it is the case.
     fn current(&self) -> Result<Token, &'static str> {
         if self.pos >= self.tokens.len() {
-            Err("Unexpected end of file.")
+            Err("Position doesn't match the token count")
         } else {
             Ok(self.tokens[self.pos].clone())
         }
@@ -368,6 +427,74 @@ impl<'a> Parser<'a> {
         } else {
             -1
         }
+    }
+
+    fn parse_extern_prototype(&mut self) -> Result<Prototype, &'static str> {
+        let fn_name = match self.curr() {
+            Ident(id) => id,
+            _ => return Err("Expected identifier in extern prototype declaration."),
+        };
+
+        self.advance();
+
+
+        match self.curr() {
+            LParen => (),
+            _ => return Err("Expected '(' character in prototype declaration."),
+        }
+
+        self.advance()?;
+
+        if let RParen = self.curr() {
+            self.advance();
+
+            return Ok(Prototype {
+                name: fn_name,
+                args: vec![],
+                is_op: false,
+                prec: 0,
+            });
+        }
+
+        let mut args = vec![];
+
+        loop {
+            match self.curr() {
+                Ident(name) => {
+                    let return_type = match name.as_ref() {
+                        "String" => {
+                            BaseType::StringType
+                        },
+                        _ => todo!(),
+                    };
+
+                    let uniq_name = format!("{}{}", name, args.len());
+
+                    args.push(Arg { name: uniq_name, return_type });
+                },
+                _ => return Err("Expected identifier in parameter declaration."),
+            }
+
+            self.advance()?;
+
+            match self.curr() {
+                RParen => {
+                    self.advance();
+                    break;
+                },
+                Comma => {
+                    self.advance();
+                },
+                _ => return Err("Expected ',' or ')' character in prototype declaration."),
+            }
+        }
+
+        Ok(Prototype {
+            name: fn_name,
+            args,
+            is_op: false,
+            prec: 0,
+        })
     }
 
     /// Parses the prototype of a function, whether external or user-defined.
@@ -448,7 +575,9 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.curr() {
-                Ident(name) => args.push(name),
+                Ident(name) => {
+                    args.push(Arg { name, return_type: BaseType::Undef })
+                },
                 _ => return Err("Expected identifier in parameter declaration."),
             }
 
@@ -474,6 +603,30 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_return_type(&mut self) -> Result<Option<BaseType>, &'static str> {
+        if let Err(_) = self.current() {
+            return Ok(None)
+        }
+
+        match self.curr() {
+            Arrow => { self.advance()?; }
+            _ => return Ok(None)
+        }
+
+        match self.curr() {
+            Ident(name) => {
+                match name.as_ref() {
+                    "String" => {
+                        self.advance();
+                        Ok(Some(BaseType::StringType))
+                    },
+                    _ => todo!(),
+                }
+            },
+            _ => Err("")
+        }
+    }
+
     /// Parses a user-defined function.
     fn parse_def(&mut self) -> Result<Function, &'static str> {
         // Eat 'def' keyword
@@ -481,6 +634,7 @@ impl<'a> Parser<'a> {
 
         // Parse signature of function
         let proto = self.parse_prototype()?;
+        let return_type = self.parse_return_type()?;
 
         // Parse body of function
         let body = self.parse_expr()?;
@@ -490,6 +644,7 @@ impl<'a> Parser<'a> {
             prototype: proto,
             body: Some(body),
             is_anon: false,
+            return_type,
         })
     }
 
@@ -499,12 +654,14 @@ impl<'a> Parser<'a> {
         self.pos += 1;
 
         // Parse signature of extern function
-        let proto = self.parse_prototype()?;
+        let proto = self.parse_extern_prototype()?;
+        let return_type = self.parse_return_type()?;
 
         Ok(Function {
             prototype: proto,
             body: None,
             is_anon: false,
+            return_type
         })
     }
 
@@ -525,6 +682,18 @@ impl<'a> Parser<'a> {
                 Ok(Expr::Number(nb))
             },
             _ => Err("Expected number literal."),
+        }
+    }
+
+    /// Parses a literal string.
+    fn parse_string_expr(&mut self) -> Result<Expr, &'static str> {
+        // Simply convert Token::StringLiteral to Expr::StringLiteral
+        match self.curr() {
+            StringLiteral(string) => {
+                self.advance();
+                Ok(Expr::InterpolableString(string))
+            },
+            _ => Err("Expected string literal."),
         }
     }
 
@@ -550,7 +719,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an expression that starts with an identifier (either a variable or a function call).
-    fn parse_id_expr(&mut self) -> Result<Expr, &'static str> {
+    fn parse_ident_expr(&mut self) -> Result<Expr, &'static str> {
         let id = match self.curr() {
             Ident(id) => id,
             _ => return Err("Expected identifier."),
@@ -647,151 +816,156 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a conditional if..then..else expression.
-    fn parse_conditional_expr(&mut self) -> Result<Expr, &'static str> {
-        // eat 'if' token
-        self.advance()?;
+    // fn parse_conditional_expr(&mut self) -> Result<Expr, &'static str> {
+    //     // eat 'if' token
+    //     self.advance()?;
 
-        let cond = self.parse_expr()?;
+    //     let cond = self.parse_expr()?;
 
-        // eat 'then' token
-        match self.current() {
-            Ok(Then) => self.advance()?,
-            _ => return Err("Expected 'then' keyword."),
-        }
+    //     // eat 'then' token
+    //     match self.current() {
+    //         Ok(Then) => self.advance()?,
+    //         _ => return Err("Expected 'then' keyword."),
+    //     }
 
-        let then = self.parse_expr()?;
+    //     let then = self.parse_expr()?;
 
-        // eat 'else' token
-        match self.current() {
-            Ok(Else) => self.advance()?,
-            _ => return Err("Expected 'else' keyword."),
-        }
+    //     // eat 'else' token
+    //     match self.current() {
+    //         Ok(Else) => self.advance()?,
+    //         _ => return Err("Expected 'else' keyword."),
+    //     }
 
-        let otherwise = self.parse_expr()?;
+    //     let otherwise = self.parse_expr()?;
 
-        Ok(Expr::Conditional {
-            cond: Box::new(cond),
-            consequence: Box::new(then),
-            alternative: Box::new(otherwise),
-        })
-    }
+    //     Ok(Expr::Conditional {
+    //         cond: Box::new(cond),
+    //         consequence: Box::new(then),
+    //         alternative: Box::new(otherwise),
+    //     })
+    // }
 
     /// Parses a loop for..in.. expression.
-    fn parse_for_expr(&mut self) -> Result<Expr, &'static str> {
-        // eat 'for' token
-        self.advance()?;
+    // fn parse_for_expr(&mut self) -> Result<Expr, &'static str> {
+    //     // eat 'for' token
+    //     self.advance()?;
 
-        let name = match self.curr() {
-            Ident(n) => n,
-            _ => return Err("Expected identifier in for loop."),
-        };
+    //     let name = match self.curr() {
+    //         Ident(n) => n,
+    //         _ => return Err("Expected identifier in for loop."),
+    //     };
 
-        // eat identifier
-        self.advance()?;
+    //     // eat identifier
+    //     self.advance()?;
 
-        // eat '=' token
-        match self.curr() {
-            Op('=') => self.advance()?,
-            _ => return Err("Expected '=' character in for loop."),
-        }
+    //     // eat '=' token
+    //     match self.curr() {
+    //         Op('=') => self.advance()?,
+    //         _ => return Err("Expected '=' character in for loop."),
+    //     }
 
-        let start = self.parse_expr()?;
+    //     let start = self.parse_expr()?;
 
-        // eat ',' token
-        match self.current()? {
-            Comma => self.advance()?,
-            _ => return Err("Expected ',' character in for loop."),
-        }
+    //     // eat ',' token
+    //     match self.current()? {
+    //         Comma => self.advance()?,
+    //         _ => return Err("Expected ',' character in for loop."),
+    //     }
 
-        let end = self.parse_expr()?;
+    //     let end = self.parse_expr()?;
 
-        // parse (optional) step expression
-        let step = match self.current()? {
-            Comma => {
-                self.advance()?;
+    //     // parse (optional) step expression
+    //     let step = match self.current()? {
+    //         Comma => {
+    //             self.advance()?;
 
-                Some(self.parse_expr()?)
-            },
+    //             Some(self.parse_expr()?)
+    //         },
 
-            _ => None,
-        };
+    //         _ => None,
+    //     };
 
-        // eat 'in' token
-        match self.current()? {
-            In => self.advance()?,
-            _ => return Err("Expected 'in' keyword in for loop."),
-        }
+    //     // eat 'in' token
+    //     match self.current()? {
+    //         In => self.advance()?,
+    //         _ => return Err("Expected 'in' keyword in for loop."),
+    //     }
 
-        let body = self.parse_expr()?;
+    //     let body = self.parse_expr()?;
 
-        Ok(Expr::For {
-            var_name: name,
-            start: Box::new(start),
-            end: Box::new(end),
-            step: step.map(Box::new),
-            body: Box::new(body),
-        })
-    }
+    //     Ok(Expr::For {
+    //         var_name: name,
+    //         start: Box::new(start),
+    //         end: Box::new(end),
+    //         step: step.map(Box::new),
+    //         body: Box::new(body),
+    //     })
+    // }
 
     /// Parses a var..in expression.
-    fn parse_var_expr(&mut self) -> Result<Expr, &'static str> {
-        // eat 'var' token
-        self.advance()?;
+    // fn parse_var_expr(&mut self) -> Result<Expr, &'static str> {
+    //     // eat 'var' token
+    //     self.advance()?;
 
-        let mut variables = Vec::new();
+    //     let mut variables = Vec::new();
 
-        // parse variables
-        loop {
-            let name = match self.curr() {
-                Ident(name) => name,
-                _ => return Err("Expected identifier in 'var..in' declaration."),
-            };
+    //     // parse variables
+    //     loop {
+    //         let name = match self.curr() {
+    //             Ident(name) => name,
+    //             _ => return Err("Expected identifier in 'var..in' declaration."),
+    //         };
 
-            self.advance()?;
+    //         self.advance()?;
 
-            // read (optional) initializer
-            let initializer = match self.curr() {
-                Op('=') => Some({
-                    self.advance()?;
-                    self.parse_expr()?
-                }),
+    //         // read (optional) initializer
+    //         let initializer = match self.curr() {
+    //             Op('=') => Some({
+    //                 self.advance()?;
+    //                 self.parse_expr()?
+    //             }),
 
-                _ => None,
-            };
+    //             _ => None,
+    //         };
 
-            variables.push((name, initializer));
+    //         variables.push((name, initializer));
 
-            match self.curr() {
-                Comma => {
-                    self.advance()?;
-                },
-                In => {
-                    self.advance()?;
-                    break;
-                },
-                _ => return Err("Expected comma or 'in' keyword in variable declaration."),
-            }
-        }
+    //         match self.curr() {
+    //             Comma => {
+    //                 self.advance()?;
+    //             },
+    //             In => {
+    //                 self.advance()?;
+    //                 break;
+    //             },
+    //             _ => return Err("Expected comma or 'in' keyword in variable declaration."),
+    //         }
+    //     }
 
-        // parse body
-        let body = self.parse_expr()?;
+    //     // parse body
+    //     let body = self.parse_expr()?;
 
-        Ok(Expr::VarIn {
-            variables,
-            body: Box::new(body),
-        })
-    }
+    //     Ok(Expr::VarIn {
+    //         variables,
+    //         body: Box::new(body),
+    //     })
+    // }
 
     /// Parses a primary expression (an identifier, a number or a parenthesized expression).
     fn parse_primary(&mut self) -> Result<Expr, &'static str> {
-        match self.curr() {
-            Ident(_) => self.parse_id_expr(),
+        let curr = self.curr();
+
+        match curr {
+            Ident(_) => self.parse_ident_expr(),
             Number(_) => self.parse_nb_expr(),
+            StringLiteral(_) => self.parse_string_expr(),
             LParen => self.parse_paren_expr(),
-            If => self.parse_conditional_expr(),
-            For => self.parse_for_expr(),
-            Var => self.parse_var_expr(),
-            _ => Err("Unknown expression."),
+            // If => self.parse_conditional_expr(),
+            // For => self.parse_for_expr(),
+            // Var => self.parse_var_expr(),
+            _ => {
+                Err("Unknown expression.")
+            },
         }
     }
 
@@ -808,6 +982,7 @@ impl<'a> Parser<'a> {
                 },
                 body: Some(expr),
                 is_anon: true,
+                return_type: Some(BaseType::Void)
             }),
 
             Err(err) => Err(err),
@@ -829,6 +1004,13 @@ pub struct Compiler<'a, 'ctx> {
 
     variables: HashMap<String, PointerValue<'ctx>>,
     fn_value_opt: Option<FunctionValue<'ctx>>,
+}
+
+#[derive(Debug)]
+pub enum ReturnValue<'a> {
+    FloatValue(FloatValue<'a>),
+    ArrayPtrValue(PointerValue<'a>),
+    VoidValue,
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
@@ -855,123 +1037,164 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             None => builder.position_at_end(entry),
         }
 
-        builder.build_alloca(self.context.f64_type(), name)
+        // fix: hardcoded to i8 types
+        builder.build_alloca(self.context.i8_type(), name)
     }
 
     /// Compiles the specified `Expr` into an LLVM `FloatValue`.
-    fn compile_expr(&mut self, expr: &Expr) -> Result<FloatValue<'ctx>, &'static str> {
-        match *expr {
-            Expr::Number(nb) => Ok(self.context.f64_type().const_float(nb)),
+    fn compile_expr(&mut self, expr: &Expr) -> Result<ReturnValue<'ctx>, &'static str> {
+        match *&expr {
+            Expr::InterpolableString(string) => {
+                let i8_type = self.context.i8_type();
+                let i8_array_type = i8_type.array_type(20);
 
-            Expr::Variable(ref name) => match self.variables.get(name.as_str()) {
-                Some(var) => Ok(self.builder.build_load(*var, name.as_str()).into_float_value()),
-                None => Err("Could not find a matching variable."),
+                let hello_world_str = self.context.const_string(string.as_bytes(), false);
+                let global_str = self.module.add_global(i8_array_type, None, "0");
+
+                global_str.set_initializer(&hello_world_str);
+
+                Ok(ReturnValue::ArrayPtrValue(global_str.as_pointer_value()))
             },
 
-            Expr::VarIn {
-                ref variables,
-                ref body,
-            } => {
-                let mut old_bindings = Vec::new();
+            Expr::Number(nb) => Ok(ReturnValue::FloatValue(self.context.f64_type().const_float(*nb))),
 
-                for &(ref var_name, ref initializer) in variables {
-                    let var_name = var_name.as_str();
+            Expr::Variable(ref _name) => todo!(),
 
-                    let initial_val = match *initializer {
-                        Some(ref init) => self.compile_expr(init)?,
-                        None => self.context.f64_type().const_float(0.),
-                    };
+            // Expr::Variable(ref name) => match self.variables.get(name.as_str()) {
+            //     Some(var) => Ok(self.builder.build_load(*var, name.as_str()).into_float_value()),
+            //     None => Err("Could not find a matching variable."),
+            // },
 
-                    let alloca = self.create_entry_block_alloca(var_name);
+            // Expr::VarIn {
+            //     ref variables,
+            //     ref body,
+            // } => {
+            //     let mut old_bindings = Vec::new();
 
-                    self.builder.build_store(alloca, initial_val);
+            //     for &(ref var_name, ref initializer) in variables {
+            //         let var_name = var_name.as_str();
 
-                    if let Some(old_binding) = self.variables.remove(var_name) {
-                        old_bindings.push(old_binding);
-                    }
+            //         let initial_val = match *initializer {
+            //             Some(ref init) => self.compile_expr(init)?,
+            //             None => self.context.f64_type().const_float(0.),
+            //         };
 
-                    self.variables.insert(var_name.to_string(), alloca);
-                }
+            //         let alloca = self.create_entry_block_alloca(var_name);
 
-                let body = self.compile_expr(body)?;
+            //         self.builder.build_store(alloca, initial_val);
 
-                for binding in old_bindings {
-                    self.variables
-                        .insert(binding.get_name().to_str().unwrap().to_string(), binding);
-                }
+            //         if let Some(old_binding) = self.variables.remove(var_name) {
+            //             old_bindings.push(old_binding);
+            //         }
 
-                Ok(body)
-            },
+            //         self.variables.insert(var_name.to_string(), alloca);
+            //     }
+
+            //     let body = self.compile_expr(body)?;
+
+            //     for binding in old_bindings {
+            //         self.variables
+            //             .insert(binding.get_name().to_str().unwrap().to_string(), binding);
+            //     }
+
+            //     Ok(body)
+            // },
 
             Expr::Binary {
                 op,
                 ref left,
                 ref right,
             } => {
-                if op == '=' {
-                    // handle assignement
-                    let var_name = match *left.borrow() {
-                        Expr::Variable(ref var_name) => var_name,
-                        _ => {
-                            return Err("Expected variable as left-hand operator of assignement.");
-                        },
-                    };
+                match op {
+                    '=' => {
+                        // handle assignement
+                        let var_name = match *left.borrow() {
+                            Expr::Variable(ref var_name) => var_name,
+                            _ => {
+                                return Err("Expected variable as left-hand operator of assignement.");
+                            },
+                        };
 
-                    let var_val = self.compile_expr(right)?;
-                    let var = self.variables.get(var_name.as_str()).ok_or("Undefined variable.")?;
+                        let var_val = self.compile_expr(right)?;
+                        let var = self.variables.get(var_name.as_str()).ok_or("Undefined variable.")?;
 
-                    self.builder.build_store(*var, var_val);
+                        match var_val {
+                            ReturnValue::FloatValue(float_value) => self.builder.build_store(*var, float_value),
+                            ReturnValue::ArrayPtrValue(array_value) => self.builder.build_store(*var, array_value),
+                            _ => todo!()
+                        };
 
-                    Ok(var_val)
-                } else {
-                    let lhs = self.compile_expr(left)?;
-                    let rhs = self.compile_expr(right)?;
-
-                    match op {
-                        '+' => Ok(self.builder.build_float_add(lhs, rhs, "tmpadd")),
-                        '-' => Ok(self.builder.build_float_sub(lhs, rhs, "tmpsub")),
-                        '*' => Ok(self.builder.build_float_mul(lhs, rhs, "tmpmul")),
-                        '/' => Ok(self.builder.build_float_div(lhs, rhs, "tmpdiv")),
-                        '<' => Ok({
-                            let cmp = self
-                                .builder
-                                .build_float_compare(FloatPredicate::ULT, lhs, rhs, "tmpcmp");
-
-                            self.builder
-                                .build_unsigned_int_to_float(cmp, self.context.f64_type(), "tmpbool")
-                        }),
-                        '>' => Ok({
-                            let cmp = self
-                                .builder
-                                .build_float_compare(FloatPredicate::ULT, rhs, lhs, "tmpcmp");
-
-                            self.builder
-                                .build_unsigned_int_to_float(cmp, self.context.f64_type(), "tmpbool")
-                        }),
-
-                        custom => {
-                            let mut name = String::from("binary");
-
-                            name.push(custom);
-
-                            match self.get_function(name.as_str()) {
-                                Some(fun) => {
-                                    match self
-                                        .builder
-                                        .build_call(fun, &[lhs.into(), rhs.into()], "tmpbin")
-                                        .try_as_basic_value()
-                                        .left()
-                                    {
-                                        Some(value) => Ok(value.into_float_value()),
-                                        None => Err("Invalid call produced."),
-                                    }
-                                },
-
-                                None => Err("Undefined binary operator."),
-                            }
-                        },
+                        Ok(var_val)
+                    },
+                    _ => {
+                        Err("only assign, no use!")
                     }
                 }
+
+                // if op == '=' {
+                //     // handle assignement
+                //     let var_name = match *left.borrow() {
+                //         Expr::Variable(ref var_name) => var_name,
+                //         _ => {
+                //             return Err("Expected variable as left-hand operator of assignement.");
+                //         },
+                //     };
+
+                //     let var_val = self.compile_expr(right)?;
+                //     let var = self.variables.get(var_name.as_str()).ok_or("Undefined variable.")?;
+
+                //     self.builder.build_store(*var, var_val);
+
+                //     Ok(var_val)
+                // } else {
+                //     let lhs = self.compile_expr(left)?;
+                //     let rhs = self.compile_expr(right)?;
+
+                //     match op {
+                //         '+' => Ok(self.builder.build_float_add(lhs, rhs, "tmpadd")),
+                //         '-' => Ok(self.builder.build_float_sub(lhs, rhs, "tmpsub")),
+                //         '*' => Ok(self.builder.build_float_mul(lhs, rhs, "tmpmul")),
+                //         '/' => Ok(self.builder.build_float_div(lhs, rhs, "tmpdiv")),
+                //         '<' => Ok({
+                //             let cmp = self
+                //                 .builder
+                //                 .build_float_compare(FloatPredicate::ULT, lhs, rhs, "tmpcmp");
+
+                //             self.builder
+                //                 .build_unsigned_int_to_float(cmp, self.context.f64_type(), "tmpbool")
+                //         }),
+                //         '>' => Ok({
+                //             let cmp = self
+                //                 .builder
+                //                 .build_float_compare(FloatPredicate::ULT, rhs, lhs, "tmpcmp");
+
+                //             self.builder
+                //                 .build_unsigned_int_to_float(cmp, self.context.f64_type(), "tmpbool")
+                //         }),
+
+                //         custom => {
+                //             let mut name = String::from("binary");
+
+                //             name.push(custom);
+
+                //             match self.get_function(name.as_str()) {
+                //                 Some(fun) => {
+                //                     match self
+                //                         .builder
+                //                         .build_call(fun, &[lhs.into(), rhs.into()], "tmpbin")
+                //                         .try_as_basic_value()
+                //                         .left()
+                //                     {
+                //                         Some(value) => Ok(value.into_float_value()),
+                //                         None => Err("Invalid call produced."),
+                //                     }
+                //                 },
+
+                //                 None => Err("Undefined binary operator."),
+                //             }
+                //         },
+                //     }
+                // }
             },
 
             Expr::Call { ref fn_name, ref args } => match self.get_function(fn_name.as_str()) {
@@ -983,7 +1206,19 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     }
 
                     let argsv: Vec<BasicMetadataValueEnum> =
-                        compiled_args.iter().by_ref().map(|&val| val.into()).collect();
+                        compiled_args.iter().map(|val| {
+                            match *val {
+                                ReturnValue::FloatValue(float_value) => float_value.into(),
+                                ReturnValue::ArrayPtrValue(array_value) => {
+                                    let zero = self.context.i32_type().const_int(0, false);
+
+                                    unsafe {
+                                        self.builder.build_gep(array_value, &[zero, zero], "gep")
+                                    }.into()
+                                },
+                                _ => todo!()
+                            }
+                        }).collect();
 
                     match self
                         .builder
@@ -991,139 +1226,167 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         .try_as_basic_value()
                         .left()
                     {
-                        Some(value) => Ok(value.into_float_value()),
-                        None => Err("Invalid call produced."),
+                        Some(value) => {
+                            match value {
+                                inkwell::values::BasicValueEnum::PointerValue(value) => Ok(ReturnValue::ArrayPtrValue(value)),
+                                inkwell::values::BasicValueEnum::FloatValue(value) => Ok(ReturnValue::FloatValue(value)),
+                                _ => todo!()
+                            }
+                        },
+                        None => Ok(ReturnValue::VoidValue),
                     }
                 },
                 None => Err("Unknown function."),
             },
 
-            Expr::Conditional {
-                ref cond,
-                ref consequence,
-                ref alternative,
-            } => {
-                let parent = self.fn_value();
-                let zero_const = self.context.f64_type().const_float(0.0);
+            // Expr::Conditional {
+            //     ref cond,
+            //     ref consequence,
+            //     ref alternative,
+            // } => {
+            //     let parent = self.fn_value();
+            //     let zero_const = self.context.f64_type().const_float(0.0);
 
-                // create condition by comparing without 0.0 and returning an int
-                let cond = self.compile_expr(cond)?;
-                let cond = self
-                    .builder
-                    .build_float_compare(FloatPredicate::ONE, cond, zero_const, "ifcond");
+            //     // create condition by comparing without 0.0 and returning an int
+            //     let cond = self.compile_expr(cond)?;
+            //     let cond = self
+            //         .builder
+            //         .build_float_compare(FloatPredicate::ONE, cond, zero_const, "ifcond");
 
-                // build branch
-                let then_bb = self.context.append_basic_block(parent, "then");
-                let else_bb = self.context.append_basic_block(parent, "else");
-                let cont_bb = self.context.append_basic_block(parent, "ifcont");
+            //     // build branch
+            //     let then_bb = self.context.append_basic_block(parent, "then");
+            //     let else_bb = self.context.append_basic_block(parent, "else");
+            //     let cont_bb = self.context.append_basic_block(parent, "ifcont");
 
-                self.builder.build_conditional_branch(cond, then_bb, else_bb);
+            //     self.builder.build_conditional_branch(cond, then_bb, else_bb);
 
-                // build then block
-                self.builder.position_at_end(then_bb);
-                let then_val = self.compile_expr(consequence)?;
-                self.builder.build_unconditional_branch(cont_bb);
+            //     // build then block
+            //     self.builder.position_at_end(then_bb);
+            //     let then_val = self.compile_expr(consequence)?;
+            //     self.builder.build_unconditional_branch(cont_bb);
 
-                let then_bb = self.builder.get_insert_block().unwrap();
+            //     let then_bb = self.builder.get_insert_block().unwrap();
 
-                // build else block
-                self.builder.position_at_end(else_bb);
-                let else_val = self.compile_expr(alternative)?;
-                self.builder.build_unconditional_branch(cont_bb);
+            //     // build else block
+            //     self.builder.position_at_end(else_bb);
+            //     let else_val = self.compile_expr(alternative)?;
+            //     self.builder.build_unconditional_branch(cont_bb);
 
-                let else_bb = self.builder.get_insert_block().unwrap();
+            //     let else_bb = self.builder.get_insert_block().unwrap();
 
-                // emit merge block
-                self.builder.position_at_end(cont_bb);
+            //     // emit merge block
+            //     self.builder.position_at_end(cont_bb);
 
-                let phi = self.builder.build_phi(self.context.f64_type(), "iftmp");
+            //     let phi = self.builder.build_phi(self.context.f64_type(), "iftmp");
 
-                phi.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
+            //     phi.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
 
-                Ok(phi.as_basic_value().into_float_value())
-            },
+            //     Ok(phi.as_basic_value().into_float_value())
+            // },
 
-            Expr::For {
-                ref var_name,
-                ref start,
-                ref end,
-                ref step,
-                ref body,
-            } => {
-                let parent = self.fn_value();
+            // Expr::For {
+            //     ref var_name,
+            //     ref start,
+            //     ref end,
+            //     ref step,
+            //     ref body,
+            // } => {
+            //     let parent = self.fn_value();
 
-                let start_alloca = self.create_entry_block_alloca(var_name);
-                let start = self.compile_expr(start)?;
+            //     let start_alloca = self.create_entry_block_alloca(var_name);
+            //     let start = self.compile_expr(start)?;
 
-                self.builder.build_store(start_alloca, start);
+            //     self.builder.build_store(start_alloca, start);
 
-                // go from current block to loop block
-                let loop_bb = self.context.append_basic_block(parent, "loop");
+            //     // go from current block to loop block
+            //     let loop_bb = self.context.append_basic_block(parent, "loop");
 
-                self.builder.build_unconditional_branch(loop_bb);
-                self.builder.position_at_end(loop_bb);
+            //     self.builder.build_unconditional_branch(loop_bb);
+            //     self.builder.position_at_end(loop_bb);
 
-                let old_val = self.variables.remove(var_name.as_str());
+            //     let old_val = self.variables.remove(var_name.as_str());
 
-                self.variables.insert(var_name.to_owned(), start_alloca);
+            //     self.variables.insert(var_name.to_owned(), start_alloca);
 
-                // emit body
-                self.compile_expr(body)?;
+            //     // emit body
+            //     self.compile_expr(body)?;
 
-                // emit step
-                let step = match *step {
-                    Some(ref step) => self.compile_expr(step)?,
-                    None => self.context.f64_type().const_float(1.0),
-                };
+            //     // emit step
+            //     let step = match *step {
+            //         Some(ref step) => self.compile_expr(step)?,
+            //         None => self.context.f64_type().const_float(1.0),
+            //     };
 
-                // compile end condition
-                let end_cond = self.compile_expr(end)?;
+            //     // compile end condition
+            //     let end_cond = self.compile_expr(end)?;
 
-                let curr_var = self.builder.build_load(start_alloca, var_name);
-                let next_var = self
-                    .builder
-                    .build_float_add(curr_var.into_float_value(), step, "nextvar");
+            //     let curr_var = self.builder.build_load(start_alloca, var_name);
+            //     let next_var = self
+            //         .builder
+            //         .build_float_add(curr_var.into_float_value(), step, "nextvar");
 
-                self.builder.build_store(start_alloca, next_var);
+            //     self.builder.build_store(start_alloca, next_var);
 
-                let end_cond = self.builder.build_float_compare(
-                    FloatPredicate::ONE,
-                    end_cond,
-                    self.context.f64_type().const_float(0.0),
-                    "loopcond",
-                );
-                let after_bb = self.context.append_basic_block(parent, "afterloop");
+            //     let end_cond = self.builder.build_float_compare(
+            //         FloatPredicate::ONE,
+            //         end_cond,
+            //         self.context.f64_type().const_float(0.0),
+            //         "loopcond",
+            //     );
+            //     let after_bb = self.context.append_basic_block(parent, "afterloop");
 
-                self.builder.build_conditional_branch(end_cond, loop_bb, after_bb);
-                self.builder.position_at_end(after_bb);
+            //     self.builder.build_conditional_branch(end_cond, loop_bb, after_bb);
+            //     self.builder.position_at_end(after_bb);
 
-                self.variables.remove(var_name);
+            //     self.variables.remove(var_name);
 
-                if let Some(val) = old_val {
-                    self.variables.insert(var_name.to_owned(), val);
-                }
+            //     if let Some(val) = old_val {
+            //         self.variables.insert(var_name.to_owned(), val);
+            //     }
 
-                Ok(self.context.f64_type().const_float(0.0))
-            },
+            //     Ok(self.context.f64_type().const_float(0.0))
+            // },
         }
     }
 
     /// Compiles the specified `Prototype` into an extern LLVM `FunctionValue`.
     fn compile_prototype(&self, proto: &Prototype) -> Result<FunctionValue<'ctx>, &'static str> {
-        let ret_type = self.context.f64_type();
-        let args_types = std::iter::repeat(ret_type)
-            .take(proto.args.len())
-            .map(|f| f.into())
-            .collect::<Vec<BasicMetadataTypeEnum>>();
+        let mut args_types = vec![];
+
+        for arg in &proto.args {
+            match &arg.return_type {
+                BaseType::StringType => {
+                    let ptr = self.context.i8_type().ptr_type(AddressSpace::default()).into();
+                    args_types.push(ptr);
+                },
+                _ => todo!()
+            };
+        }
+
         let args_types = args_types.as_slice();
 
-        let fn_type = self.context.f64_type().fn_type(args_types, false);
+        let fn_type = match &self.function.return_type {
+            Some(ret_type) => {
+                match ret_type {
+                    BaseType::StringType => {
+                        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
+                        i8_ptr_type.fn_type(args_types, false)
+                    },
+                    BaseType::Void => {
+                        self.context.void_type().fn_type(args_types, false)
+                    },
+                    _ => todo!()
+                }
+            },
+            None => self.context.void_type().fn_type(args_types, false)
+        };
+
         let fn_val = self.module.add_function(proto.name.as_str(), fn_type, None);
 
         // set arguments names
-        for (i, arg) in fn_val.get_param_iter().enumerate() {
-            arg.into_float_value().set_name(proto.args[i].as_str());
-        }
+        // for (i, arg) in fn_val.get_param_iter().enumerate() {
+        //     arg.into_float_value().set_name(proto.args[i].name.as_str());
+        // }
 
         // finally return built prototype
         Ok(fn_val)
@@ -1150,18 +1413,22 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         self.variables.reserve(proto.args.len());
 
         for (i, arg) in function.get_param_iter().enumerate() {
-            let arg_name = proto.args[i].as_str();
+            let arg_name = proto.args[i].name.as_str();
             let alloca = self.create_entry_block_alloca(arg_name);
 
             self.builder.build_store(alloca, arg);
 
-            self.variables.insert(proto.args[i].clone(), alloca);
+            self.variables.insert(proto.args[i].name.clone(), alloca);
         }
 
         // compile body
         let body = self.compile_expr(self.function.body.as_ref().unwrap())?;
 
-        self.builder.build_return(Some(&body));
+        match body {
+            ReturnValue::FloatValue(value) => self.builder.build_return(Some(&value)),
+            ReturnValue::ArrayPtrValue(value) => self.builder.build_return(Some(&value)),
+            ReturnValue::VoidValue => self.builder.build_return(None)
+        };
 
         // return the whole thing after verification and optimization
         if function.verify(true) {
