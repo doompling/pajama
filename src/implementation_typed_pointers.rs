@@ -7,10 +7,11 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
-use inkwell::values::{BasicMetadataValueEnum, FloatValue, FunctionValue, PointerValue};
+use inkwell::values::{BasicMetadataValueEnum, FloatValue, FunctionValue, PointerValue, BasicValue};
 use inkwell::AddressSpace;
 
 use Token::*;
+use safer_ffi::string;
 
 const ANONYMOUS_FUNCTION_NAME: &str = "anonymous";
 
@@ -1037,8 +1038,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             None => builder.position_at_end(entry),
         }
 
-        // fix: hardcoded to i8 types
-        builder.build_alloca(self.context.i8_type(), name)
+        let struct_type = self.context.struct_type(&[self.context.i8_type().ptr_type(AddressSpace::default()).into(), self.context.i32_type().into(), self.context.i32_type().into()], false);
+
+        // fix: hardcoded to string type
+        builder.build_alloca(struct_type, name)
     }
 
     /// Compiles the specified `Expr` into an LLVM `FloatValue`.
@@ -1053,7 +1056,29 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
                 global_str.set_initializer(&hello_world_str);
 
-                Ok(ReturnValue::ArrayPtrValue(global_str.as_pointer_value()))
+                let malloc_string_fn = self.module.get_function("allocate_string").unwrap();
+                let i32_type = self.context.i32_type();
+
+                // Get a pointer to the first element of the array
+                let zero = self.context.i32_type().const_int(0, false);
+                let indices = [zero, zero];
+
+                let element_pointer = unsafe {
+                    self.builder.build_gep(global_str.as_pointer_value(), &indices, "element_ptr")
+                };
+
+                let args = &[
+                    element_pointer.into(),
+                    i32_type.const_int(string.len() as u64, false).as_basic_value_enum().into()
+                ];
+
+                let nilla_str_ptr = self.builder.build_call(malloc_string_fn, args, "tmp")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap();
+
+                // Ok(ReturnValue::ArrayPtrValue(global_str.as_pointer_value()))
+                Ok(ReturnValue::ArrayPtrValue(nilla_str_ptr.as_basic_value_enum().into_pointer_value()))
             },
 
             Expr::Number(nb) => Ok(ReturnValue::FloatValue(self.context.f64_type().const_float(*nb))),
@@ -1209,13 +1234,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         compiled_args.iter().map(|val| {
                             match *val {
                                 ReturnValue::FloatValue(float_value) => float_value.into(),
-                                ReturnValue::ArrayPtrValue(array_value) => {
-                                    let zero = self.context.i32_type().const_int(0, false);
-
-                                    unsafe {
-                                        self.builder.build_gep(array_value, &[zero, zero], "gep")
-                                    }.into()
-                                },
+                                ReturnValue::ArrayPtrValue(string_ptr) => { string_ptr.into() },
                                 _ => todo!()
                             }
                         }).collect();
@@ -1356,7 +1375,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         for arg in &proto.args {
             match &arg.return_type {
                 BaseType::StringType => {
-                    let ptr = self.context.i8_type().ptr_type(AddressSpace::default()).into();
+                    let struct_type = self.context.struct_type(&[self.context.i8_type().ptr_type(AddressSpace::default()).into(), self.context.i32_type().into(), self.context.i32_type().into()], false);
+                    let ptr = struct_type.ptr_type(AddressSpace::default()).into();
+
                     args_types.push(ptr);
                 },
                 _ => todo!()
@@ -1369,8 +1390,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Some(ret_type) => {
                 match ret_type {
                     BaseType::StringType => {
-                        let i8_ptr_type = self.context.i8_type().ptr_type(AddressSpace::default());
-                        i8_ptr_type.fn_type(args_types, false)
+                        let struct_type = self.context.struct_type(&[self.context.i8_type().ptr_type(AddressSpace::default()).into(), self.context.i32_type().into(), self.context.i32_type().into()], false);
+                        struct_type.ptr_type(AddressSpace::default()).fn_type(args_types, false)
                     },
                     BaseType::Void => {
                         self.context.void_type().fn_type(args_types, false)

@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 
-use libc::printf;
-use libc::c_char;
-
+use inkwell::AddressSpace;
 use inkwell::context::Context;
 use inkwell::passes::PassManager;
 use inkwell::OptimizationLevel;
@@ -40,12 +38,74 @@ pub extern "C" fn printd(x: f64) -> f64 {
     x
 }
 
-#[no_mangle]
-pub extern "C" fn print(message: *const c_char) {
-    unsafe {
-        printf(message);
+use mimalloc_rust::GlobalMiMalloc;
+use mimalloc_rust::raw::basic_allocation::*;
+
+#[global_allocator]
+static GLOBAL_MIMALLOC: GlobalMiMalloc = GlobalMiMalloc;
+
+#[repr(C)]
+pub struct NillaString {
+    buffer: *mut u8,
+    length: i32,
+    max_length: i32,
+}
+
+impl NillaString {
+    #[no_mangle]
+    fn allocate_string(bytes: *const u8, length: i32) -> *mut NillaString {
+        let ptr: *mut u8 = unsafe { mi_malloc(length as usize).cast() };
+
+        unsafe { core::ptr::copy(bytes, ptr, length as usize); }
+
+        let nilla_string = NillaString {
+            buffer: ptr,
+            length,
+            max_length: length
+        };
+
+        let size = core::mem::size_of::<NillaString>();
+        let ptr: *mut NillaString = unsafe { mi_malloc(size).cast() };
+
+        if !ptr.is_null() {
+            unsafe { ptr.write(nilla_string) };
+        }
+
+        ptr
     }
 }
+
+#[no_mangle]
+pub extern "Rust" fn print(nilla_string: *const NillaString) {
+    if nilla_string.is_null() {
+        println!("Null pointer passed to print function");
+        return;
+    }
+
+    let string = unsafe { &*nilla_string };
+
+    if string.buffer.is_null() {
+        println!("Null buffer pointer passed to print function");
+        return;
+    }
+
+    let slice = unsafe { std::slice::from_raw_parts(string.buffer, string.length as usize) };
+    let str_value = std::str::from_utf8(slice);
+
+    match str_value {
+        Ok(value) => {
+            println!("");
+            println!("Message: {}", value);
+            println!("");
+        }
+        Err(_) => {
+            println!("Invalid UTF-8 sequence");
+        }
+    }
+}
+
+#[used]
+static EXTERNAL_FNS4: [extern "Rust" fn(*const NillaString); 1] = [print];
 
 // Adding the functions above to a global array,
 // so Rust compiler won't remove them.
@@ -53,8 +113,7 @@ pub extern "C" fn print(message: *const c_char) {
 static EXTERNAL_FNS: [extern "C" fn(f64) -> f64; 2] = [putchard, printd];
 
 #[used]
-// static EXTERNAL_FNS2: [extern "Rust" fn(&[u8; 19]); 1] = [print];
-static EXTERNAL_FNS2: [extern "C" fn(*const c_char); 1] = [print];
+static EXTERNAL_FNS2: [extern "Rust" fn(bytes: *const u8, initial_length: i32) -> *mut NillaString; 1] = [NillaString::allocate_string];
 
 /// Entry point of the program; acts as a REPL.
 // #[llvm_versions(4.0..=14.0)]
@@ -136,6 +195,26 @@ pub fn main() {
 
     // make module
     let module = context.create_module("tmp");
+
+
+    // NillaString struct type
+    let string_struct_type = context.struct_type(&[context.i8_type().ptr_type(AddressSpace::default()).into(), context.i32_type().into(), context.i32_type().into()], false);
+
+    // Define the function type
+    // let struct_type = context.struct_type(&[], false);
+    let struct_ptr_type = string_struct_type.ptr_type(AddressSpace::default());
+    let bytes_ptr_type = context.i8_type().ptr_type(AddressSpace::default());
+    let length_type = context.i32_type();
+
+    let function_type = struct_ptr_type.fn_type(
+        &[bytes_ptr_type.into(), length_type.into()],
+        // args,
+        false
+    );
+
+    module.add_function("allocate_string", function_type, None);
+
+    // println!("{:#?}", module.print_to_string());
 
     // // recompile every previously parsed function into the new module
     // for prev in &previous_exprs {
