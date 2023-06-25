@@ -1,0 +1,75 @@
+# namespace base
+#    namespace net
+#       class TcpServer
+#          host: String
+#          port: Int32
+
+#          def accept -> TcpStream
+#          end
+#       end
+
+#       class TcpStream
+#          def read -> String
+#          end
+
+#          def write(string)
+#          end
+#       end
+#    end
+
+#    namespace filesystem
+#       class File
+#          class_def read(path) -> String
+#          end
+#       end
+#    end
+# end
+
+# use base::fs::File
+# use base::net::TcpServer
+
+class TcpServer
+   host: String
+   port: Int32
+
+   def accept -> TcpStream
+   end
+end
+
+class TcpStream
+   def read -> String
+   end
+
+   def write(string)
+   end
+end
+
+class File
+   class_def read(path) -> String
+   end
+end
+
+def handle_connection(stream)
+   print(stream.read)
+
+   status_line = "HTTP/1.1 200 OK"
+   contents = File.read("hello.html")
+   length = contents.length
+   response = "#{status_line}\r\nContent-Length: #{length}\r\n\r\n#{contents}"
+
+   stream.write(response)
+end
+
+def main
+   server = TcpServer(
+      host: "127.0.0.1",
+      port: 7878
+   )
+
+   print("Server listening on 127.0.0.1:7878")
+
+   loop {
+      stream = server.accept()
+      handle_connection(stream)
+   }
+end
