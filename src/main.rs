@@ -201,7 +201,6 @@ pub fn main() {
     let string_struct_type = context.struct_type(&[context.i8_type().ptr_type(AddressSpace::default()).into(), context.i32_type().into(), context.i32_type().into()], false);
 
     // Define the function type
-    // let struct_type = context.struct_type(&[], false);
     let struct_ptr_type = string_struct_type.ptr_type(AddressSpace::default());
     let bytes_ptr_type = context.i8_type().ptr_type(AddressSpace::default());
     let length_type = context.i32_type();
@@ -213,6 +212,12 @@ pub fn main() {
     );
 
     module.add_function("allocate_string", function_type, None);
+
+    // Add print fn
+
+    let print_args = &[struct_ptr_type.into()];
+    let print_function_type = context.void_type().fn_type(print_args, false);
+    module.add_function("print", print_function_type, None);
 
     // println!("{:#?}", module.print_to_string());
 
