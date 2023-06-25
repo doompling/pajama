@@ -9,4 +9,6 @@ edition = "2021"
 inkwell = { version = "0.1.1", features = ["llvm14-0"] }
 inkwell_internals = "0.7.0"
 libc = "0.2.146"
+mimalloc-rust = "0.2.1"
+safer-ffi = "0.1.0"
 # llvm-sys = "140.0.5"
