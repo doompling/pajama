@@ -207,14 +207,12 @@ pub fn main() {
 
     let function_type = struct_ptr_type.fn_type(
         &[bytes_ptr_type.into(), length_type.into()],
-        // args,
         false
     );
 
     module.add_function("allocate_string", function_type, None);
 
     // Add print fn
-
     let print_args = &[struct_ptr_type.into()];
     let print_function_type = context.void_type().fn_type(print_args, false);
     module.add_function("print", print_function_type, None);
@@ -232,12 +230,12 @@ pub fn main() {
             continue;
          }
 
-         let (name, is_anonymous) = match Parser::new(line.to_string(), &mut prec).parse() {
+         let (name, is_main) = match Parser::new(line.to_string(), &mut prec).parse() {
              Ok(fun) => {
-                 let is_anon = fun.is_anon;
+                 let is_main = fun.is_main;
 
                  if display_parser_output {
-                     if is_anon {
+                     if is_main {
                          println!("-> Expression parsed: \n{:?}\n", fun.body);
                      } else {
                          println!("-> Function parsed: \n{:?}\n", fun);
@@ -253,12 +251,12 @@ pub fn main() {
                              function.print_to_stderr();
                          }
 
-                         if !is_anon {
+                         if !is_main {
                              // only add it now to ensure it is correct
                              previous_exprs.push(fun);
                          }
 
-                         (function.get_name().to_str().unwrap().to_string(), is_anon)
+                         (function.get_name().to_str().unwrap().to_string(), is_main)
                      },
                      Err(err) => {
                          println!("!> Error compiling function: {}", err);
@@ -272,7 +270,7 @@ pub fn main() {
              },
          };
 
-         if is_anonymous {
+         if is_main {
              // let path = Path::new("./first_try");
 
              // target_machine. write_to_file(&module, targets::FileType::Object, path).unwrap();

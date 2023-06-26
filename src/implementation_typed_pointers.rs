@@ -13,7 +13,7 @@ use inkwell::AddressSpace;
 use Token::*;
 use safer_ffi::string;
 
-const ANONYMOUS_FUNCTION_NAME: &str = "anonymous";
+const ANONYMOUS_FUNCTION_NAME: &str = "main";
 
 // ======================================================================================
 // LEXER ================================================================================
@@ -27,7 +27,6 @@ pub enum Token {
     Comma,
     Comment,
     Def,
-    StringLiteral(String),
     Else,
     End,
     EOF,
@@ -37,10 +36,12 @@ pub enum Token {
     If,
     In,
     LParen,
+    NewLine,
     Number(f64),
     Op(char),
     RParen,
     Semicolon,
+    StringLiteral(String),
     Then,
     Unary,
     Var,
@@ -103,7 +104,7 @@ impl<'a> Lexer<'a> {
         // Actually get the next token.
         let result = match ch {
             ' ' => Token::Whitespace,
-            '\n' => Token::Whitespace,
+            '\n' => Token::NewLine,
             ';' => Token::Semicolon,
             '(' => Token::LParen,
             ')' => Token::RParen,
@@ -325,7 +326,7 @@ pub struct Function {
     pub prototype: Prototype,
     pub return_type: Option<BaseType>,
     pub body: Option<Expr>,
-    pub is_anon: bool,
+    pub is_main: bool,
 }
 
 /// Represents the `Expr` parser.
@@ -369,12 +370,27 @@ impl<'a> Parser<'a> {
         let result = match self.current()? {
             Def => self.parse_def(),
             Extern => self.parse_extern(),
-            _ => self.parse_toplevel_expr(),
+            // _ => self.parse_toplevel_expr(),
+            _ => Err("Expected function definition"),
         };
 
         match result {
             Ok(result) => {
+                while let Ok(NewLine) = self.current() {
+                    self.advance()?;
+                }
+
+                if let Ok(End) = self.current() {
+                    self.advance()?;
+                }
+
+                while let Ok(NewLine) = self.current() {
+                    self.advance();
+                }
+
                 if !self.at_end() {
+                    println!("{:#?}", self.curr());
+
                     Err("Unexpected token after parsed expression.")
                 } else {
                     Ok(result)
@@ -382,6 +398,14 @@ impl<'a> Parser<'a> {
             },
 
             err => err,
+        }
+    }
+
+    fn peek(&self) -> Result<Token, &'static str> {
+        if self.pos + 1 >= self.tokens.len() {
+            Err("Peeked at end of file")
+        } else {
+            Ok(self.tokens[self.pos + 1].clone())
         }
     }
 
@@ -441,7 +465,7 @@ impl<'a> Parser<'a> {
 
         match self.curr() {
             LParen => (),
-            _ => return Err("Expected '(' character in prototype declaration."),
+            _ => return Err("Expected '(' character in prototype declaration. 1"),
         }
 
         self.advance()?;
@@ -484,9 +508,13 @@ impl<'a> Parser<'a> {
                     break;
                 },
                 Comma => {
+                    if let Ok(NewLine) = self.peek() {
+                        self.advance()?;
+                    }
+
                     self.advance();
                 },
-                _ => return Err("Expected ',' or ')' character in prototype declaration."),
+                _ => return Err("Expected ',' or ')' character in prototype declaration. 1"),
             }
         }
 
@@ -507,56 +535,66 @@ impl<'a> Parser<'a> {
                 (id, false, 0)
             },
 
-            Binary => {
-                self.advance()?;
+            // Binary => {
+            //     self.advance()?;
 
-                let op = match self.curr() {
-                    Op(ch) => ch,
-                    _ => return Err("Expected operator in custom operator declaration."),
-                };
+            //     let op = match self.curr() {
+            //         Op(ch) => ch,
+            //         _ => return Err("Expected operator in custom operator declaration."),
+            //     };
 
-                self.advance()?;
+            //     self.advance()?;
 
-                let mut name = String::from("binary");
+            //     let mut name = String::from("binary");
 
-                name.push(op);
+            //     name.push(op);
 
-                let prec = if let Number(prec) = self.curr() {
-                    self.advance()?;
+            //     let prec = if let Number(prec) = self.curr() {
+            //         self.advance()?;
 
-                    prec as usize
-                } else {
-                    0
-                };
+            //         prec as usize
+            //     } else {
+            //         0
+            //     };
 
-                self.prec.insert(op, prec as i32);
+            //     self.prec.insert(op, prec as i32);
 
-                (name, true, prec)
-            },
+            //     (name, true, prec)
+            // },
 
-            Unary => {
-                self.advance()?;
+            // Unary => {
+            //     self.advance()?;
 
-                let op = match self.curr() {
-                    Op(ch) => ch,
-                    _ => return Err("Expected operator in custom operator declaration."),
-                };
+            //     let op = match self.curr() {
+            //         Op(ch) => ch,
+            //         _ => return Err("Expected operator in custom operator declaration."),
+            //     };
 
-                let mut name = String::from("unary");
+            //     let mut name = String::from("unary");
 
-                name.push(op);
+            //     name.push(op);
 
-                self.advance()?;
+            //     self.advance()?;
 
-                (name, true, 0)
-            },
+            //     (name, true, 0)
+            // },
 
             _ => return Err("Expected identifier in prototype declaration."),
         };
 
         match self.curr() {
             LParen => (),
-            _ => return Err("Expected '(' character in prototype declaration."),
+            NewLine => {
+                self.advance();
+
+                return Ok(Prototype {
+                    name: id,
+                    args: vec![],
+                    is_op: is_operator,
+                    prec: precedence,
+                });
+            }
+            _ => return Err("Expected '(' character in prototype declaration. 2"),
         }
 
         self.advance()?;
@@ -591,8 +629,14 @@ impl<'a> Parser<'a> {
                 },
                 Comma => {
                     self.advance();
+
+                    if let Ok(NewLine) = self.current() {
+                        self.advance();
+                    }
                 },
-                _ => return Err("Expected ',' or ')' character in prototype declaration."),
+                _ => {
+                    return Err("Expected ',' or ')' character in prototype declaration. 2")
+                },
             }
         }
 
@@ -637,6 +681,17 @@ impl<'a> Parser<'a> {
         let proto = self.parse_prototype()?;
         let return_type = self.parse_return_type()?;
 
+        let mut is_main = false;
+
+        if proto.name == "main" {
+            is_main = true;
+        }
+
+        // match self.curr() {
+        //     NewLine => { self.advance(); },
+        //     _ => { return Err("Expected a new line after a function declaration.") }
+        // }
+
         // Parse body of function
         let body = self.parse_expr()?;
 
@@ -644,7 +699,7 @@ impl<'a> Parser<'a> {
         Ok(Function {
             prototype: proto,
             body: Some(body),
-            is_anon: false,
+            is_main,
             return_type,
         })
     }
@@ -661,7 +716,7 @@ impl<'a> Parser<'a> {
         Ok(Function {
             prototype: proto,
             body: None,
-            is_anon: false,
+            is_main: false,
             return_type
         })
     }
@@ -747,7 +802,11 @@ impl<'a> Parser<'a> {
                     args.push(self.parse_expr()?);
 
                     match self.current()? {
-                        Comma => (),
+                        Comma => {
+                            if let Ok(NewLine) = self.peek() {
+                                self.advance()?;
+                            }
+                        },
                         RParen => break,
                         _ => return Err("Expected ',' character in function call."),
                     }
@@ -788,6 +847,11 @@ impl<'a> Parser<'a> {
     fn parse_binary_expr(&mut self, prec: i32, mut left: Expr) -> Result<Expr, &'static str> {
         loop {
             let curr_prec = self.get_tok_precedence();
+
+            if let Ok(End) = self.current() {
+                self.advance()?;
+                return Ok(left)
+            }
 
             if curr_prec < prec || self.at_end() {
                 return Ok(left);
@@ -970,25 +1034,25 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses a top-level expression and makes an anonymous function out of it,
-    /// for easier compilation.
-    fn parse_toplevel_expr(&mut self) -> Result<Function, &'static str> {
-        match self.parse_expr() {
-            Ok(expr) => Ok(Function {
-                prototype: Prototype {
-                    name: ANONYMOUS_FUNCTION_NAME.to_string(),
-                    args: vec![],
-                    is_op: false,
-                    prec: 0,
-                },
-                body: Some(expr),
-                is_anon: true,
-                return_type: Some(BaseType::Void)
-            }),
+    // /// Parses a top-level expression and makes an anonymous function out of it,
+    // /// for easier compilation.
+    // fn parse_toplevel_expr(&mut self) -> Result<Function, &'static str> {
+    //     match self.parse_expr() {
+    //         Ok(expr) => Ok(Function {
+    //             prototype: Prototype {
+    //                 name: ANONYMOUS_FUNCTION_NAME.to_string(),
+    //                 args: vec![],
+    //                 is_op: false,
+    //                 prec: 0,
+    //             },
+    //             body: Some(expr),
+    //             is_main: true,
+    //             return_type: Some(BaseType::Void)
+    //         }),
 
-            Err(err) => Err(err),
-        }
-    }
+    //         Err(err) => Err(err),
+    //     }
+    // }
 }
 
 // ======================================================================================
