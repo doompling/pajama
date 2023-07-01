@@ -1,3 +1,7 @@
+mod nilla_compiler;
+
+use nilla_compiler::NillaCompiler;
+
 use std::collections::HashMap;
 use std::io::Write;
 
@@ -170,7 +174,7 @@ pub fn main() {
 
     fpm.initialize();
 
-    let mut previous_exprs = Vec::new();
+    // let mut previous_exprs = Vec::new();
 
     // Read input from stdin
     let input = std::fs::read_to_string("dev.nla").unwrap();
@@ -225,77 +229,73 @@ pub fn main() {
     //         .expect("Cannot re-add previously compiled function.");
     // }
 
-     for line in input.split(";") {
-         if line.trim().is_empty() {
-            continue;
-         }
+    NillaCompiler::compile(&input);
 
-         let (name, is_main) = match Parser::new(line.to_string(), &mut prec).parse() {
-             Ok(fun) => {
-                 let is_main = fun.is_main;
+    // let (name, is_main) = match Parser::new(input, &mut prec).parse() {
+    //     Ok(fun) => {
+    //         let is_main = fun.is_main;
 
-                 if display_parser_output {
-                     if is_main {
-                         println!("-> Expression parsed: \n{:?}\n", fun.body);
-                     } else {
-                         println!("-> Function parsed: \n{:?}\n", fun);
-                     }
-                 }
+    //         if display_parser_output {
+    //             if is_main {
+    //                 println!("-> Expression parsed: \n{:?}\n", fun.body);
+    //             } else {
+    //                 println!("-> Function parsed: \n{:?}\n", fun);
+    //             }
+    //         }
 
-                 match Compiler::compile(&context, &builder, &fpm, &module, &fun) {
-                     Ok(function) => {
-                         if display_compiler_output {
-                             // Not printing a new line since LLVM automatically
-                             // prefixes the generated string with one
-                             print_flush!("-> Expression compiled to IR:");
-                             function.print_to_stderr();
-                         }
+    //         match Compiler::compile(&context, &builder, &fpm, &module, &fun) {
+    //             Ok(function) => {
+    //                 if display_compiler_output {
+    //                     // Not printing a new line since LLVM automatically
+    //                     // prefixes the generated string with one
+    //                     print_flush!("-> Expression compiled to IR:");
+    //                     function.print_to_stderr();
+    //                 }
 
-                         if !is_main {
-                             // only add it now to ensure it is correct
-                             previous_exprs.push(fun);
-                         }
+    //                 if !is_main {
+    //                     // only add it now to ensure it is correct
+    //                     previous_exprs.push(fun);
+    //                 }
 
-                         (function.get_name().to_str().unwrap().to_string(), is_main)
-                     },
-                     Err(err) => {
-                         println!("!> Error compiling function: {}", err);
-                         std::process::exit(1);
-                     },
-                 }
-             },
-             Err(err) => {
-                 println!("!> Error parsing expression: {}", err);
-                 std::process::exit(1);
-             },
-         };
+    //                 (function.get_name().to_str().unwrap().to_string(), is_main)
+    //             },
+    //             Err(err) => {
+    //                 println!("!> Error compiling function: {}", err);
+    //                 std::process::exit(1);
+    //             },
+    //         }
+    //     },
+    //     Err(err) => {
+    //         println!("!> Error parsing expression: {}", err);
+    //         std::process::exit(1);
+    //     },
+    // };
 
-         if is_main {
-             // let path = Path::new("./first_try");
+    // if is_main {
+    //     // let path = Path::new("./first_try");
 
-             // target_machine. write_to_file(&module, targets::FileType::Object, path).unwrap();
+    //     // target_machine. write_to_file(&module, targets::FileType::Object, path).unwrap();
 
-             // module.write_bitcode_to_path(path);
+    //     // module.write_bitcode_to_path(path);
 
-             println!("###################");
-             println!("{}", module.print_to_string().to_string());
-             println!("###################");
+    //     println!("###################");
+    //     println!("{}", module.print_to_string().to_string());
+    //     println!("###################");
 
 
-             let ee = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
+    //     let ee = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
 
-             let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> f64>(name.as_str()) };
-             let compiled_fn = match maybe_fn {
-                 Ok(f) => f,
-                 Err(err) => {
-                     println!("!> Error during execution: {:?}", err);
-                     std::process::exit(1);
-                 },
-             };
+    //     let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> f64>(name.as_str()) };
+    //     let compiled_fn = match maybe_fn {
+    //         Ok(f) => f,
+    //         Err(err) => {
+    //             println!("!> Error during execution: {:?}", err);
+    //             std::process::exit(1);
+    //         },
+    //     };
 
-             unsafe {
-                 println!("=> {}", compiled_fn.call());
-             }
-         }
-     }
+    //     unsafe {
+    //         println!("=> {}", compiled_fn.call());
+    //     }
+    // }
 }
