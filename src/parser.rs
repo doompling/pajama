@@ -17,17 +17,17 @@ pub struct Call {
 
 #[derive(Debug)]
 pub struct Int {
-    pub value: f64
+    pub value: f64,
 }
 
 #[derive(Debug)]
 pub struct InterpolableString {
-    pub value: String
+    pub value: String,
 }
 
 #[derive(Debug)]
 pub struct Module {
-    pub body: Vec<Node>
+    pub body: Vec<Node>,
 }
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ pub enum Node {
     Def(Def),
     Int(Int),
     InterpolableString(InterpolableString),
-    Module(Module)
+    Module(Module),
 }
 
 // impl Node {
@@ -51,13 +51,13 @@ pub enum Node {
 pub enum BaseType {
     StringType,
     Void,
-    Undef
+    Undef,
 }
 
 #[derive(Debug)]
 pub struct Arg {
     pub name: String,
-    pub return_type: BaseType
+    pub return_type: BaseType,
 }
 
 #[derive(Debug)]
@@ -78,7 +78,7 @@ pub struct Def {
 
 #[derive(Debug)]
 pub struct ParserResult {
-   pub ast: Node,
+    pub ast: Node,
 }
 
 #[derive(Debug)]
@@ -102,7 +102,9 @@ impl<'a> Parser<'a> {
 
         loop {
             self.advance_optional_whitespace();
-            if self.at_end() { break }
+            if self.at_end() {
+                break;
+            }
 
             let result = match self.current()? {
                 Token::Def => self.parse_def(),
@@ -112,7 +114,9 @@ impl<'a> Parser<'a> {
             body.push(result?);
         }
 
-        Ok(ParserResult { ast: Node::Module(Module { body }) })
+        Ok(ParserResult {
+            ast: Node::Module(Module { body }),
+        })
     }
 
     /// Parses a user-defined function.
@@ -126,10 +130,10 @@ impl<'a> Parser<'a> {
         self.advance_optional_space();
 
         match self.curr() {
-            Token::NewLine(_) => { self.advance(); }
-            _ => {
-                return Err("Expected newline after function return type")
-            },
+            Token::NewLine(_) => {
+                self.advance();
+            }
+            _ => return Err("Expected newline after function return type"),
         }
 
         let mut body = vec![];
@@ -141,26 +145,26 @@ impl<'a> Parser<'a> {
                 Token::End => {
                     self.advance();
                     break;
-                },
-                _ => { body.push(self.parse_expr()?) }
+                }
+                _ => body.push(self.parse_expr()?),
             }
         }
 
         // Return new function
-        Ok(
-            Node::Def(Def {
-                main_fn: proto.name == "main",
-                prototype: proto,
-                body,
-            })
-        )
+        Ok(Node::Def(Def {
+            main_fn: proto.name == "main",
+            prototype: proto,
+            body,
+        }))
     }
 
     /// Parses the prototype of a function, whether external or user-defined.
     fn parse_prototype(&mut self) -> Result<Prototype, &'static str> {
         match self.current()? {
-            Token::Space(_) => { self.advance(); },
-            _ => return Err("Expected space after def keyword")
+            Token::Space(_) => {
+                self.advance();
+            }
+            _ => return Err("Expected space after def keyword"),
         }
 
         let (id, is_operator, precedence) = match self.curr() {
@@ -168,10 +172,8 @@ impl<'a> Parser<'a> {
                 self.advance()?;
 
                 (id, false, 0)
-            },
-            _ => return {
-                Err("Expected identifier in prototype declaration.")
-            },
+            }
+            _ => return { Err("Expected identifier in prototype declaration.") },
         };
 
         self.advance_optional_space();
@@ -189,9 +191,7 @@ impl<'a> Parser<'a> {
                     prec: precedence,
                 });
             }
-            _ => {
-                return Err("Expected '(' character in prototype declaration. 2")
-            },
+            _ => return Err("Expected '(' character in prototype declaration. 2"),
         }
 
         self.advance_optional_whitespace();
@@ -217,9 +217,10 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             match self.curr() {
-                Token::Ident(pos, name) => {
-                    args.push(Arg { name, return_type: BaseType::Undef })
-                },
+                Token::Ident(pos, name) => args.push(Arg {
+                    name,
+                    return_type: BaseType::Undef,
+                }),
                 _ => return Err("Expected identifier in parameter declaration."),
             }
 
@@ -230,13 +231,11 @@ impl<'a> Parser<'a> {
                 Token::RParen => {
                     self.advance();
                     break;
-                },
+                }
                 Token::Comma => {
                     self.advance();
-                },
-                _ => {
-                    return Err("Expected ',' or ')' character in prototype declaration. 2")
-                },
+                }
+                _ => return Err("Expected ',' or ')' character in prototype declaration. 2"),
             }
         }
 
@@ -255,7 +254,7 @@ impl<'a> Parser<'a> {
         match self.current()? {
             Token::Arrow => {
                 self.advance();
-            },
+            }
             Token::Space(_) => {
                 if let Ok(next_token) = self.peek() {
                     match next_token {
@@ -263,17 +262,16 @@ impl<'a> Parser<'a> {
                             self.advance();
                             self.advance();
                             self.advance_optional_whitespace();
-
-                        },
+                        }
                         Token::NewLine(_) => {
                             self.advance();
                             self.advance();
-                            return Ok(None)
+                            return Ok(None);
                         }
-                        _ => return Err("Expected an arrow to indicate a return type")
+                        _ => return Err("Expected an arrow to indicate a return type"),
                     }
                 }
-            },
+            }
             _ => {}
         }
 
@@ -281,23 +279,21 @@ impl<'a> Parser<'a> {
             Token::Arrow => {
                 self.advance_optional_whitespace();
                 self.advance();
-            },
-            _ => return Ok(None)
+            }
+            _ => return Ok(None),
         }
 
         self.advance_optional_whitespace();
 
         match self.curr() {
-            Token::Ident(pos, name) => {
-                match name.as_ref() {
-                    "String" => {
-                        self.advance();
-                        Ok(Some(BaseType::StringType))
-                    },
-                    _ => Err("Only String return type is currently supported"),
+            Token::Ident(pos, name) => match name.as_ref() {
+                "String" => {
+                    self.advance();
+                    Ok(Some(BaseType::StringType))
                 }
+                _ => Err("Only String return type is currently supported"),
             },
-            _ => Err("Expected a return type after an arrow")
+            _ => Err("Expected a return type after an arrow"),
         }
     }
 
@@ -307,7 +303,7 @@ impl<'a> Parser<'a> {
             Ok(left) => {
                 self.advance_optional_whitespace();
                 self.parse_binary_expr(0, left)
-            },
+            }
             err => err,
         }
     }
@@ -318,7 +314,7 @@ impl<'a> Parser<'a> {
             Token::Op(ch) => {
                 self.advance()?;
                 ch
-            },
+            }
             _ => return self.parse_primary(),
         };
 
@@ -342,7 +338,7 @@ impl<'a> Parser<'a> {
             _ => {
                 panic!("{:#?}", self);
                 Err("Unknown expression.")
-            },
+            }
         }
     }
 
@@ -352,7 +348,7 @@ impl<'a> Parser<'a> {
             Token::Ident(pos, id) => {
                 self.advance();
                 id
-            },
+            }
             _ => return Err("Expected identifier."),
         };
 
@@ -383,23 +379,21 @@ impl<'a> Parser<'a> {
                         Token::RParen => {
                             self.advance();
                             break;
-                        },
+                        }
                         Token::Comma => {
                             self.advance();
-                        },
-                        _ => {
-                            return Err("Expected ',' or ')' character in function call.")
-                        },
+                        }
+                        _ => return Err("Expected ',' or ')' character in function call."),
                     }
                 }
 
                 Ok(Node::Call(Call { fn_name: id, args }))
-            },
+            }
 
             // _ => Ok(Node::Variable(id)),
             _ => {
                 todo!("variable reference")
-            },
+            }
         }
     }
 
@@ -409,7 +403,7 @@ impl<'a> Parser<'a> {
             Token::Number(pos, nb) => {
                 self.advance();
                 Ok(Node::Int(Int { value: nb }))
-            },
+            }
             _ => Err("Expected number literal."),
         }
     }
@@ -419,8 +413,10 @@ impl<'a> Parser<'a> {
         match self.curr() {
             Token::StringLiteral(pos, string) => {
                 self.advance();
-                Ok(Node::InterpolableString(InterpolableString { value: string }))
-            },
+                Ok(Node::InterpolableString(InterpolableString {
+                    value: string,
+                }))
+            }
             _ => Err("Expected string literal."),
         }
     }
@@ -452,7 +448,7 @@ impl<'a> Parser<'a> {
         loop {
             if let Ok(Token::End) = self.current() {
                 // self.advance()?;
-                return Ok(left)
+                return Ok(left);
             }
 
             let curr_prec = self.get_tok_precedence();
@@ -484,7 +480,7 @@ impl<'a> Parser<'a> {
                 right: Box::new(right),
             });
         }
-     }
+    }
 
     fn peek(&self) -> Result<Token, &'static str> {
         if self.pos + 1 >= self.tokens.len() {
@@ -538,12 +534,14 @@ impl<'a> Parser<'a> {
 
     fn advance_optional_whitespace(&mut self) {
         match self.current() {
-            Ok(token) => {
-                match token {
-                    Token::Space(_) => { self.advance(); },
-                    Token::NewLine(_) => { self.advance(); },
-                    _ => {}
+            Ok(token) => match token {
+                Token::Space(_) => {
+                    self.advance();
                 }
+                Token::NewLine(_) => {
+                    self.advance();
+                }
+                _ => {}
             },
             Err(_) => {}
         }
@@ -551,11 +549,11 @@ impl<'a> Parser<'a> {
 
     fn advance_optional_space(&mut self) {
         match self.current() {
-            Ok(token) => {
-                match token {
-                    Token::Space(_) => { self.advance(); },
-                    _ => {}
+            Ok(token) => match token {
+                Token::Space(_) => {
+                    self.advance();
                 }
+                _ => {}
             },
             Err(_) => {}
         }

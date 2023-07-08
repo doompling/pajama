@@ -1,12 +1,12 @@
+mod codegen;
+mod lexer;
 mod nilla_compiler;
 mod parser;
-mod lexer;
-mod codegen;
 
 use nilla_compiler::NillaCompiler;
 
-use mimalloc_rust::GlobalMiMalloc;
 use mimalloc_rust::raw::basic_allocation::*;
+use mimalloc_rust::GlobalMiMalloc;
 
 #[global_allocator]
 static GLOBAL_MIMALLOC: GlobalMiMalloc = GlobalMiMalloc;

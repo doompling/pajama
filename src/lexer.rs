@@ -58,7 +58,7 @@ impl Lexer<'_> {
     pub fn lex(&mut self) -> Option<Token> {
         let ch = match self.chars.next() {
             Some(ch) => ch,
-            None => return None
+            None => return None,
         };
 
         self.column_pos += 1;

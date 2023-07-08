@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
+use crate::codegen::Compiler;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::codegen::Compiler;
 
-pub struct NillaCompiler {
-
-}
+pub struct NillaCompiler {}
 
 impl NillaCompiler {
     pub fn compile(input: &str) {

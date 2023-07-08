@@ -5,11 +5,13 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
-use inkwell::targets::{TargetMachine, RelocMode, CodeModel, Target, InitializationConfig};
-use inkwell::values::{BasicMetadataValueEnum, FloatValue, FunctionValue, PointerValue, BasicValue};
+use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
+use inkwell::values::{
+    BasicMetadataValueEnum, BasicValue, FloatValue, FunctionValue, PointerValue,
+};
 use inkwell::{AddressSpace, OptimizationLevel};
 
-use crate::parser::{*, self};
+use crate::parser::{self, *};
 
 #[repr(C)]
 pub struct NillaString {
@@ -23,12 +25,14 @@ impl NillaString {
     fn allocate_string(bytes: *const u8, length: i32) -> *mut NillaString {
         let ptr: *mut u8 = unsafe { mi_malloc(length as usize).cast() };
 
-        unsafe { core::ptr::copy(bytes, ptr, length as usize); }
+        unsafe {
+            core::ptr::copy(bytes, ptr, length as usize);
+        }
 
         let nilla_string = NillaString {
             buffer: ptr,
             length,
-            max_length: length
+            max_length: length,
         };
 
         let size = core::mem::size_of::<NillaString>();
@@ -43,7 +47,7 @@ impl NillaString {
 }
 
 #[no_mangle]
-pub extern "Rust" fn print(nilla_string: *const NillaString) {
+pub fn print(nilla_string: *const NillaString) {
     if nilla_string.is_null() {
         println!("Null pointer passed to print function");
         return;
@@ -71,37 +75,35 @@ pub extern "Rust" fn print(nilla_string: *const NillaString) {
     }
 }
 
+#[used]
+static EXTERNAL_FNS1: [fn(*const NillaString); 1] = [print];
 
 #[used]
-static EXTERNAL_FNS1: [extern "Rust" fn(*const NillaString); 1] = [print];
-
-#[used]
-static EXTERNAL_FNS2: [extern "Rust" fn(bytes: *const u8, initial_length: i32) -> *mut NillaString; 1] = [NillaString::allocate_string];
+static EXTERNAL_FNS2: [fn(bytes: *const u8, initial_length: i32) -> *mut NillaString; 1] =
+    [NillaString::allocate_string];
 
 #[derive(Debug)]
 pub enum ReturnValue<'a> {
-  FloatValue(FloatValue<'a>),
-  ArrayPtrValue(PointerValue<'a>),
-  VoidValue,
+    FloatValue(FloatValue<'a>),
+    ArrayPtrValue(PointerValue<'a>),
+    VoidValue,
 }
 
 /// Defines the `Expr` compiler.
 #[derive(Debug)]
 pub struct Compiler<'a, 'ctx> {
-  pub parser_result: &'a ParserResult,
-  pub context: &'ctx Context,
-  pub builder: &'a Builder<'ctx>,
-  pub fpm: &'a PassManager<FunctionValue<'ctx>>,
-  pub llvm_module: &'a Module<'ctx>,
+    pub parser_result: &'a ParserResult,
+    pub context: &'ctx Context,
+    pub builder: &'a Builder<'ctx>,
+    pub fpm: &'a PassManager<FunctionValue<'ctx>>,
+    pub llvm_module: &'a Module<'ctx>,
 
-  variables: HashMap<String, PointerValue<'ctx>>,
-  fn_value_opt: Option<FunctionValue<'ctx>>,
+    variables: HashMap<String, PointerValue<'ctx>>,
+    fn_value_opt: Option<FunctionValue<'ctx>>,
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
-    pub fn compile(
-        parser_result: ParserResult
-    ) {
+    pub fn compile(parser_result: ParserResult) {
         Target::initialize_all(&InitializationConfig::default());
 
         let target_triple = TargetMachine::get_default_triple();
@@ -141,17 +143,22 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         fpm.initialize();
 
         // NillaString struct type
-        let string_struct_type = context.struct_type(&[context.i8_type().ptr_type(AddressSpace::default()).into(), context.i32_type().into(), context.i32_type().into()], false);
+        let string_struct_type = context.struct_type(
+            &[
+                context.i8_type().ptr_type(AddressSpace::default()).into(),
+                context.i32_type().into(),
+                context.i32_type().into(),
+            ],
+            false,
+        );
 
         // Define the function type
         let struct_ptr_type = string_struct_type.ptr_type(AddressSpace::default());
         let bytes_ptr_type = context.i8_type().ptr_type(AddressSpace::default());
         let length_type = context.i32_type();
 
-        let function_type = struct_ptr_type.fn_type(
-            &[bytes_ptr_type.into(), length_type.into()],
-            false
-        );
+        let function_type =
+            struct_ptr_type.fn_type(&[bytes_ptr_type.into(), length_type.into()], false);
 
         module.add_function("allocate_string", function_type, None);
 
@@ -159,7 +166,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let print_args = &[struct_ptr_type.into()];
         let print_function_type = context.void_type().fn_type(print_args, false);
         module.add_function("print", print_function_type, None);
-
 
         let mut compiler = Compiler {
             parser_result: &parser_result,
@@ -176,7 +182,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         println!("\n{}", module.print_to_string().to_string());
         println!("###################");
 
-        let ee = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
+        let ee = module
+            .create_jit_execution_engine(OptimizationLevel::None)
+            .unwrap();
 
         let maybe_fn = unsafe { ee.get_function::<unsafe extern "C" fn() -> f64>("main") };
         let compiled_fn = match maybe_fn {
@@ -184,7 +192,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Err(err) => {
                 println!("!> Error during execution: {:?}", err);
                 std::process::exit(1);
-            },
+            }
         };
 
         unsafe {
@@ -196,8 +204,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         match &self.parser_result.ast {
             Node::Module(module) => {
                 self.compile_module(module);
-            },
-            _ => { panic!("Expected module to compile") }
+            }
+            _ => {
+                panic!("Expected module to compile")
+            }
         }
     }
 
@@ -218,7 +228,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 Node::Call(_) => todo!(),
                 Node::Def(def) => {
                     self.compile_fn(def).unwrap();
-                },
+                }
                 Node::Int(_) => todo!(),
                 Node::InterpolableString(_) => todo!(),
                 Node::Module(_) => todo!(),
@@ -231,368 +241,399 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         let function = self.get_function(&node.prototype.name).unwrap();
 
-      // got external function, returning only compiled prototype
-      if node.body.is_empty() {
-          return Ok(function);
-      }
+        // got external function, returning only compiled prototype
+        if node.body.is_empty() {
+            return Ok(function);
+        }
 
-      let entry = self.context.append_basic_block(function, "entry");
+        let entry = self.context.append_basic_block(function, "entry");
 
-      self.builder.position_at_end(entry);
+        self.builder.position_at_end(entry);
 
-      // update fn field
-      self.fn_value_opt = Some(function);
+        // update fn field
+        self.fn_value_opt = Some(function);
 
-      // build variables map
-      self.variables.reserve(proto.args.len());
+        // build variables map
+        self.variables.reserve(proto.args.len());
 
-      for (i, arg) in function.get_param_iter().enumerate() {
-          let arg_name = proto.args[i].name.as_str();
-          let alloca = self.create_entry_block_alloca(arg_name);
+        for (i, arg) in function.get_param_iter().enumerate() {
+            let arg_name = proto.args[i].name.as_str();
+            let alloca = self.create_entry_block_alloca(arg_name);
 
-          self.builder.build_store(alloca, arg);
+            self.builder.build_store(alloca, arg);
 
-          self.variables.insert(proto.args[i].name.clone(), alloca);
-      }
+            self.variables.insert(proto.args[i].name.clone(), alloca);
+        }
 
-      // compile body
-      for node in node.body.iter() {
-        //   let body = self.compile_expr(self.function.body.as_ref().unwrap())?;
-          let body = self.compile_expr(node)?;
+        // compile body
+        for node in node.body.iter() {
+            //   let body = self.compile_expr(self.function.body.as_ref().unwrap())?;
+            let body = self.compile_expr(node)?;
 
-          match body {
-              ReturnValue::FloatValue(value) => self.builder.build_return(Some(&value)),
-              ReturnValue::ArrayPtrValue(value) => self.builder.build_return(Some(&value)),
-              ReturnValue::VoidValue => self.builder.build_return(None)
-          };
-      }
+            match body {
+                ReturnValue::FloatValue(value) => self.builder.build_return(Some(&value)),
+                ReturnValue::ArrayPtrValue(value) => self.builder.build_return(Some(&value)),
+                ReturnValue::VoidValue => self.builder.build_return(None),
+            };
+        }
 
-      // return the whole thing after verification and optimization
-      if function.verify(true) {
-          self.fpm.run_on(&function);
+        // return the whole thing after verification and optimization
+        if function.verify(true) {
+            self.fpm.run_on(&function);
 
-          Ok(function)
-      } else {
-          unsafe {
-              function.delete();
-          }
-
-          Err("Invalid generated function.")
-      }
-  }
-
-  fn compile_prototype(&self, proto: &Prototype) -> Result<FunctionValue<'ctx>, &'static str> {
-      let mut args_types = vec![];
-
-      for arg in &proto.args {
-          match &arg.return_type {
-              BaseType::StringType => {
-                  let struct_type = self.context.struct_type(&[self.context.i8_type().ptr_type(AddressSpace::default()).into(), self.context.i32_type().into(), self.context.i32_type().into()], false);
-                  let ptr = struct_type.ptr_type(AddressSpace::default()).into();
-
-                  args_types.push(ptr);
-              },
-              _ => todo!()
-          };
-      }
-
-      let args_types = args_types.as_slice();
-
-      let fn_type = match &proto.return_type {
-          Some(ret_type) => {
-              match ret_type {
-                  BaseType::StringType => {
-                      let struct_type = self.context.struct_type(&[self.context.i8_type().ptr_type(AddressSpace::default()).into(), self.context.i32_type().into(), self.context.i32_type().into()], false);
-                      struct_type.ptr_type(AddressSpace::default()).fn_type(args_types, false)
-                  },
-                  BaseType::Void => {
-                      self.context.void_type().fn_type(args_types, false)
-                  },
-                  _ => todo!()
-              }
-          },
-          None => self.context.void_type().fn_type(args_types, false)
-      };
-
-      let fn_val = self.llvm_module.add_function(proto.name.as_str(), fn_type, None);
-
-      // set arguments names
-      // for (i, arg) in fn_val.get_param_iter().enumerate() {
-      //     arg.into_float_value().set_name(proto.args[i].name.as_str());
-      // }
-
-      // finally return built prototype
-      Ok(fn_val)
-  }
-
-
-  /// Gets a defined function given its name.
-  #[inline]
-  fn get_function(&self, name: &str) -> Option<FunctionValue<'ctx>> {
-      self.llvm_module.get_function(name)
-  }
-
-  /// Returns the `FunctionValue` representing the function being compiled.
-  #[inline]
-  fn fn_value(&self) -> FunctionValue<'ctx> {
-      self.fn_value_opt.unwrap()
-  }
-
-  /// Creates a new stack allocation instruction in the entry block of the function.
-  fn create_entry_block_alloca(&self, name: &str) -> PointerValue<'ctx> {
-      let builder = self.context.create_builder();
-
-      let entry = self.fn_value().get_first_basic_block().unwrap();
-
-      match entry.get_first_instruction() {
-          Some(first_instr) => builder.position_before(&first_instr),
-          None => builder.position_at_end(entry),
-      }
-
-      let struct_type = self.context.struct_type(&[self.context.i8_type().ptr_type(AddressSpace::default()).into(), self.context.i32_type().into(), self.context.i32_type().into()], false);
-
-      // fix: hardcoded to string type
-      builder.build_alloca(struct_type, name)
-  }
-
-  /// Compiles the specified `Expr` into an LLVM `FloatValue`.
-  fn compile_expr(&mut self, expr: &Node) -> Result<ReturnValue<'ctx>, &'static str> {
-      match *&expr {
-            Node::Module(module) => {
-                Err("module todo")
+            Ok(function)
+        } else {
+            unsafe {
+                function.delete();
             }
 
-            Node::Def(def) => {
-                Err("def todo")
+            Err("Invalid generated function.")
+        }
+    }
+
+    fn compile_prototype(&self, proto: &Prototype) -> Result<FunctionValue<'ctx>, &'static str> {
+        let mut args_types = vec![];
+
+        for arg in &proto.args {
+            match &arg.return_type {
+                BaseType::StringType => {
+                    let struct_type = self.context.struct_type(
+                        &[
+                            self.context
+                                .i8_type()
+                                .ptr_type(AddressSpace::default())
+                                .into(),
+                            self.context.i32_type().into(),
+                            self.context.i32_type().into(),
+                        ],
+                        false,
+                    );
+                    let ptr = struct_type.ptr_type(AddressSpace::default()).into();
+
+                    args_types.push(ptr);
+                }
+                _ => todo!(),
+            };
+        }
+
+        let args_types = args_types.as_slice();
+
+        let fn_type = match &proto.return_type {
+            Some(ret_type) => match ret_type {
+                BaseType::StringType => {
+                    let struct_type = self.context.struct_type(
+                        &[
+                            self.context
+                                .i8_type()
+                                .ptr_type(AddressSpace::default())
+                                .into(),
+                            self.context.i32_type().into(),
+                            self.context.i32_type().into(),
+                        ],
+                        false,
+                    );
+                    struct_type
+                        .ptr_type(AddressSpace::default())
+                        .fn_type(args_types, false)
+                }
+                BaseType::Void => self.context.void_type().fn_type(args_types, false),
+                _ => todo!(),
+            },
+            None => self.context.void_type().fn_type(args_types, false),
+        };
+
+        let fn_val = self
+            .llvm_module
+            .add_function(proto.name.as_str(), fn_type, None);
+
+        // set arguments names
+        // for (i, arg) in fn_val.get_param_iter().enumerate() {
+        //     arg.into_float_value().set_name(proto.args[i].name.as_str());
+        // }
+
+        // finally return built prototype
+        Ok(fn_val)
+    }
+
+    /// Gets a defined function given its name.
+    #[inline]
+    fn get_function(&self, name: &str) -> Option<FunctionValue<'ctx>> {
+        self.llvm_module.get_function(name)
+    }
+
+    /// Returns the `FunctionValue` representing the function being compiled.
+    #[inline]
+    fn fn_value(&self) -> FunctionValue<'ctx> {
+        self.fn_value_opt.unwrap()
+    }
+
+    /// Creates a new stack allocation instruction in the entry block of the function.
+    fn create_entry_block_alloca(&self, name: &str) -> PointerValue<'ctx> {
+        let builder = self.context.create_builder();
+
+        let entry = self.fn_value().get_first_basic_block().unwrap();
+
+        match entry.get_first_instruction() {
+            Some(first_instr) => builder.position_before(&first_instr),
+            None => builder.position_at_end(entry),
+        }
+
+        let struct_type = self.context.struct_type(
+            &[
+                self.context
+                    .i8_type()
+                    .ptr_type(AddressSpace::default())
+                    .into(),
+                self.context.i32_type().into(),
+                self.context.i32_type().into(),
+            ],
+            false,
+        );
+
+        // fix: hardcoded to string type
+        builder.build_alloca(struct_type, name)
+    }
+
+    /// Compiles the specified `Expr` into an LLVM `FloatValue`.
+    fn compile_expr(&mut self, expr: &Node) -> Result<ReturnValue<'ctx>, &'static str> {
+        match *&expr {
+            Node::Module(module) => Err("module todo"),
+
+            Node::Def(def) => Err("def todo"),
+
+            Node::InterpolableString(string) => {
+                let i8_type = self.context.i8_type();
+                let i8_array_type = i8_type.array_type(20);
+
+                let hello_world_str = self.context.const_string(string.value.as_bytes(), false);
+                let global_str = self.llvm_module.add_global(i8_array_type, None, "0");
+
+                global_str.set_initializer(&hello_world_str);
+
+                let malloc_string_fn = self.llvm_module.get_function("allocate_string").unwrap();
+                let i32_type = self.context.i32_type();
+
+                // Get a pointer to the first element of the array
+                let zero = self.context.i32_type().const_int(0, false);
+                let indices = [zero, zero];
+
+                let element_pointer = unsafe {
+                    self.builder
+                        .build_gep(global_str.as_pointer_value(), &indices, "element_ptr")
+                };
+
+                let args = &[
+                    element_pointer.into(),
+                    i32_type
+                        .const_int(string.value.len() as u64, false)
+                        .as_basic_value_enum()
+                        .into(),
+                ];
+
+                let nilla_str_ptr = self
+                    .builder
+                    .build_call(malloc_string_fn, args, "tmp")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap();
+
+                // Ok(ReturnValue::ArrayPtrValue(global_str.as_pointer_value()))
+                Ok(ReturnValue::ArrayPtrValue(
+                    nilla_str_ptr.as_basic_value_enum().into_pointer_value(),
+                ))
             }
 
-          Node::InterpolableString(string) => {
-              let i8_type = self.context.i8_type();
-              let i8_array_type = i8_type.array_type(20);
+            Node::Int(nb) => Ok(ReturnValue::FloatValue(
+                self.context.f64_type().const_float(nb.value),
+            )),
 
-              let hello_world_str = self.context.const_string(string.value.as_bytes(), false);
-              let global_str = self.llvm_module.add_global(i8_array_type, None, "0");
+            //   Node::Variable(ref _name) => todo!(),
 
-              global_str.set_initializer(&hello_world_str);
+            // Node::Variable(ref name) => match self.variables.get(name.as_str()) {
+            //     Some(var) => Ok(self.builder.build_load(*var, name.as_str()).into_float_value()),
+            //     None => Err("Could not find a matching variable."),
+            // },
 
-              let malloc_string_fn = self.llvm_module.get_function("allocate_string").unwrap();
-              let i32_type = self.context.i32_type();
+            // Node::VarIn {
+            //     ref variables,
+            //     ref body,
+            // } => {
+            //     let mut old_bindings = Vec::new();
 
-              // Get a pointer to the first element of the array
-              let zero = self.context.i32_type().const_int(0, false);
-              let indices = [zero, zero];
+            //     for &(ref var_name, ref initializer) in variables {
+            //         let var_name = var_name.as_str();
 
-              let element_pointer = unsafe {
-                  self.builder.build_gep(global_str.as_pointer_value(), &indices, "element_ptr")
-              };
+            //         let initial_val = match *initializer {
+            //             Some(ref init) => self.compile_expr(init)?,
+            //             None => self.context.f64_type().const_float(0.),
+            //         };
 
-              let args = &[
-                  element_pointer.into(),
-                  i32_type.const_int(string.value.len() as u64, false).as_basic_value_enum().into()
-              ];
+            //         let alloca = self.create_entry_block_alloca(var_name);
 
-              let nilla_str_ptr = self.builder.build_call(malloc_string_fn, args, "tmp")
-                  .try_as_basic_value()
-                  .left()
-                  .unwrap();
+            //         self.builder.build_store(alloca, initial_val);
 
-              // Ok(ReturnValue::ArrayPtrValue(global_str.as_pointer_value()))
-              Ok(ReturnValue::ArrayPtrValue(nilla_str_ptr.as_basic_value_enum().into_pointer_value()))
-          },
+            //         if let Some(old_binding) = self.variables.remove(var_name) {
+            //             old_bindings.push(old_binding);
+            //         }
 
-          Node::Int(nb) => Ok(ReturnValue::FloatValue(self.context.f64_type().const_float(nb.value))),
+            //         self.variables.insert(var_name.to_string(), alloca);
+            //     }
 
-        //   Node::Variable(ref _name) => todo!(),
+            //     let body = self.compile_expr(body)?;
 
-          // Node::Variable(ref name) => match self.variables.get(name.as_str()) {
-          //     Some(var) => Ok(self.builder.build_load(*var, name.as_str()).into_float_value()),
-          //     None => Err("Could not find a matching variable."),
-          // },
+            //     for binding in old_bindings {
+            //         self.variables
+            //             .insert(binding.get_name().to_str().unwrap().to_string(), binding);
+            //     }
 
-          // Node::VarIn {
-          //     ref variables,
-          //     ref body,
-          // } => {
-          //     let mut old_bindings = Vec::new();
+            //     Ok(body)
+            // },
+            Node::Binary(binary) => Err("todo"),
 
-          //     for &(ref var_name, ref initializer) in variables {
-          //         let var_name = var_name.as_str();
+            Node::Call(call) => match self.get_function(call.fn_name.as_str()) {
+                Some(fun) => {
+                    let mut compiled_args = Vec::with_capacity(call.args.len());
 
-          //         let initial_val = match *initializer {
-          //             Some(ref init) => self.compile_expr(init)?,
-          //             None => self.context.f64_type().const_float(0.),
-          //         };
+                    for arg in &call.args {
+                        compiled_args.push(self.compile_expr(&arg)?);
+                    }
 
-          //         let alloca = self.create_entry_block_alloca(var_name);
+                    let argsv: Vec<BasicMetadataValueEnum> = compiled_args
+                        .iter()
+                        .map(|val| match *val {
+                            ReturnValue::FloatValue(float_value) => float_value.into(),
+                            ReturnValue::ArrayPtrValue(string_ptr) => string_ptr.into(),
+                            _ => todo!(),
+                        })
+                        .collect();
 
-          //         self.builder.build_store(alloca, initial_val);
+                    match self
+                        .builder
+                        .build_call(fun, argsv.as_slice(), "tmp")
+                        .try_as_basic_value()
+                        .left()
+                    {
+                        Some(value) => match value {
+                            inkwell::values::BasicValueEnum::PointerValue(value) => {
+                                Ok(ReturnValue::ArrayPtrValue(value))
+                            }
+                            inkwell::values::BasicValueEnum::FloatValue(value) => {
+                                Ok(ReturnValue::FloatValue(value))
+                            }
+                            _ => todo!(),
+                        },
+                        None => Ok(ReturnValue::VoidValue),
+                    }
+                }
+                None => Err("Unknown function."),
+            },
+            // Node::Conditional {
+            //     ref cond,
+            //     ref consequence,
+            //     ref alternative,
+            // } => {
+            //     let parent = self.fn_value();
+            //     let zero_const = self.context.f64_type().const_float(0.0);
 
-          //         if let Some(old_binding) = self.variables.remove(var_name) {
-          //             old_bindings.push(old_binding);
-          //         }
+            //     // create condition by comparing without 0.0 and returning an int
+            //     let cond = self.compile_expr(cond)?;
+            //     let cond = self
+            //         .builder
+            //         .build_float_compare(FloatPredicate::ONE, cond, zero_const, "ifcond");
 
-          //         self.variables.insert(var_name.to_string(), alloca);
-          //     }
+            //     // build branch
+            //     let then_bb = self.context.append_basic_block(parent, "then");
+            //     let else_bb = self.context.append_basic_block(parent, "else");
+            //     let cont_bb = self.context.append_basic_block(parent, "ifcont");
 
-          //     let body = self.compile_expr(body)?;
+            //     self.builder.build_conditional_branch(cond, then_bb, else_bb);
 
-          //     for binding in old_bindings {
-          //         self.variables
-          //             .insert(binding.get_name().to_str().unwrap().to_string(), binding);
-          //     }
+            //     // build then block
+            //     self.builder.position_at_end(then_bb);
+            //     let then_val = self.compile_expr(consequence)?;
+            //     self.builder.build_unconditional_branch(cont_bb);
 
-          //     Ok(body)
-          // },
+            //     let then_bb = self.builder.get_insert_block().unwrap();
 
-          Node::Binary(binary) => {
-            Err("todo")
-          },
+            //     // build else block
+            //     self.builder.position_at_end(else_bb);
+            //     let else_val = self.compile_expr(alternative)?;
+            //     self.builder.build_unconditional_branch(cont_bb);
 
-          Node::Call(call) => {
-            match self.get_function(call.fn_name.as_str()) {
-              Some(fun) => {
-                  let mut compiled_args = Vec::with_capacity(call.args.len());
+            //     let else_bb = self.builder.get_insert_block().unwrap();
 
-                  for arg in &call.args {
-                      compiled_args.push(self.compile_expr(&arg)?);
-                  }
+            //     // emit merge block
+            //     self.builder.position_at_end(cont_bb);
 
-                  let argsv: Vec<BasicMetadataValueEnum> =
-                      compiled_args.iter().map(|val| {
-                          match *val {
-                              ReturnValue::FloatValue(float_value) => float_value.into(),
-                              ReturnValue::ArrayPtrValue(string_ptr) => { string_ptr.into() },
-                              _ => todo!()
-                          }
-                      }).collect();
+            //     let phi = self.builder.build_phi(self.context.f64_type(), "iftmp");
 
-                  match self
-                      .builder
-                      .build_call(fun, argsv.as_slice(), "tmp")
-                      .try_as_basic_value()
-                      .left()
-                  {
-                      Some(value) => {
-                          match value {
-                              inkwell::values::BasicValueEnum::PointerValue(value) => Ok(ReturnValue::ArrayPtrValue(value)),
-                              inkwell::values::BasicValueEnum::FloatValue(value) => Ok(ReturnValue::FloatValue(value)),
-                              _ => todo!()
-                          }
-                      },
-                      None => Ok(ReturnValue::VoidValue),
-                  }
-              },
-              None => Err("Unknown function."),
-            }
-          },
+            //     phi.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
 
-          // Node::Conditional {
-          //     ref cond,
-          //     ref consequence,
-          //     ref alternative,
-          // } => {
-          //     let parent = self.fn_value();
-          //     let zero_const = self.context.f64_type().const_float(0.0);
+            //     Ok(phi.as_basic_value().into_float_value())
+            // },
 
-          //     // create condition by comparing without 0.0 and returning an int
-          //     let cond = self.compile_expr(cond)?;
-          //     let cond = self
-          //         .builder
-          //         .build_float_compare(FloatPredicate::ONE, cond, zero_const, "ifcond");
+            // Node::For {
+            //     ref var_name,
+            //     ref start,
+            //     ref end,
+            //     ref step,
+            //     ref body,
+            // } => {
+            //     let parent = self.fn_value();
 
-          //     // build branch
-          //     let then_bb = self.context.append_basic_block(parent, "then");
-          //     let else_bb = self.context.append_basic_block(parent, "else");
-          //     let cont_bb = self.context.append_basic_block(parent, "ifcont");
+            //     let start_alloca = self.create_entry_block_alloca(var_name);
+            //     let start = self.compile_expr(start)?;
 
-          //     self.builder.build_conditional_branch(cond, then_bb, else_bb);
+            //     self.builder.build_store(start_alloca, start);
 
-          //     // build then block
-          //     self.builder.position_at_end(then_bb);
-          //     let then_val = self.compile_expr(consequence)?;
-          //     self.builder.build_unconditional_branch(cont_bb);
+            //     // go from current block to loop block
+            //     let loop_bb = self.context.append_basic_block(parent, "loop");
 
-          //     let then_bb = self.builder.get_insert_block().unwrap();
+            //     self.builder.build_unconditional_branch(loop_bb);
+            //     self.builder.position_at_end(loop_bb);
 
-          //     // build else block
-          //     self.builder.position_at_end(else_bb);
-          //     let else_val = self.compile_expr(alternative)?;
-          //     self.builder.build_unconditional_branch(cont_bb);
+            //     let old_val = self.variables.remove(var_name.as_str());
 
-          //     let else_bb = self.builder.get_insert_block().unwrap();
+            //     self.variables.insert(var_name.to_owned(), start_alloca);
 
-          //     // emit merge block
-          //     self.builder.position_at_end(cont_bb);
+            //     // emit body
+            //     self.compile_expr(body)?;
 
-          //     let phi = self.builder.build_phi(self.context.f64_type(), "iftmp");
+            //     // emit step
+            //     let step = match *step {
+            //         Some(ref step) => self.compile_expr(step)?,
+            //         None => self.context.f64_type().const_float(1.0),
+            //     };
 
-          //     phi.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
+            //     // compile end condition
+            //     let end_cond = self.compile_expr(end)?;
 
-          //     Ok(phi.as_basic_value().into_float_value())
-          // },
+            //     let curr_var = self.builder.build_load(start_alloca, var_name);
+            //     let next_var = self
+            //         .builder
+            //         .build_float_add(curr_var.into_float_value(), step, "nextvar");
 
-          // Node::For {
-          //     ref var_name,
-          //     ref start,
-          //     ref end,
-          //     ref step,
-          //     ref body,
-          // } => {
-          //     let parent = self.fn_value();
+            //     self.builder.build_store(start_alloca, next_var);
 
-          //     let start_alloca = self.create_entry_block_alloca(var_name);
-          //     let start = self.compile_expr(start)?;
+            //     let end_cond = self.builder.build_float_compare(
+            //         FloatPredicate::ONE,
+            //         end_cond,
+            //         self.context.f64_type().const_float(0.0),
+            //         "loopcond",
+            //     );
+            //     let after_bb = self.context.append_basic_block(parent, "afterloop");
 
-          //     self.builder.build_store(start_alloca, start);
+            //     self.builder.build_conditional_branch(end_cond, loop_bb, after_bb);
+            //     self.builder.position_at_end(after_bb);
 
-          //     // go from current block to loop block
-          //     let loop_bb = self.context.append_basic_block(parent, "loop");
+            //     self.variables.remove(var_name);
 
-          //     self.builder.build_unconditional_branch(loop_bb);
-          //     self.builder.position_at_end(loop_bb);
+            //     if let Some(val) = old_val {
+            //         self.variables.insert(var_name.to_owned(), val);
+            //     }
 
-          //     let old_val = self.variables.remove(var_name.as_str());
-
-          //     self.variables.insert(var_name.to_owned(), start_alloca);
-
-          //     // emit body
-          //     self.compile_expr(body)?;
-
-          //     // emit step
-          //     let step = match *step {
-          //         Some(ref step) => self.compile_expr(step)?,
-          //         None => self.context.f64_type().const_float(1.0),
-          //     };
-
-          //     // compile end condition
-          //     let end_cond = self.compile_expr(end)?;
-
-          //     let curr_var = self.builder.build_load(start_alloca, var_name);
-          //     let next_var = self
-          //         .builder
-          //         .build_float_add(curr_var.into_float_value(), step, "nextvar");
-
-          //     self.builder.build_store(start_alloca, next_var);
-
-          //     let end_cond = self.builder.build_float_compare(
-          //         FloatPredicate::ONE,
-          //         end_cond,
-          //         self.context.f64_type().const_float(0.0),
-          //         "loopcond",
-          //     );
-          //     let after_bb = self.context.append_basic_block(parent, "afterloop");
-
-          //     self.builder.build_conditional_branch(end_cond, loop_bb, after_bb);
-          //     self.builder.position_at_end(after_bb);
-
-          //     self.variables.remove(var_name);
-
-          //     if let Some(val) = old_val {
-          //         self.variables.insert(var_name.to_owned(), val);
-          //     }
-
-          //     Ok(self.context.f64_type().const_float(0.0))
-          // },
-      }
-  }
+            //     Ok(self.context.f64_type().const_float(0.0))
+            // },
+        }
+    }
 }
