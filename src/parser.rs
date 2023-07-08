@@ -64,6 +64,7 @@ pub struct Arg {
 pub struct Prototype {
     pub name: String,
     pub args: Vec<Arg>,
+    pub return_type: Option<BaseType>,
     pub is_op: bool,
     pub prec: usize,
 }
@@ -72,7 +73,6 @@ pub struct Prototype {
 pub struct Def {
     pub main_fn: bool,
     pub prototype: Prototype,
-    pub return_type: Option<BaseType>,
     pub body: Vec<Node>,
 }
 
@@ -122,7 +122,6 @@ impl<'a> Parser<'a> {
 
         // Parse signature of function
         let proto = self.parse_prototype()?;
-        let return_type = self.parse_return_type()?;
 
         self.advance_optional_space();
 
@@ -153,7 +152,6 @@ impl<'a> Parser<'a> {
                 main_fn: proto.name == "main",
                 prototype: proto,
                 body,
-                return_type,
             })
         )
     }
@@ -181,9 +179,12 @@ impl<'a> Parser<'a> {
         match self.curr() {
             Token::LParen => (),
             Token::NewLine(_) => {
+                let return_type = self.parse_return_type()?;
+
                 return Ok(Prototype {
                     name: id,
                     args: vec![],
+                    return_type,
                     is_op: is_operator,
                     prec: precedence,
                 });
@@ -199,9 +200,12 @@ impl<'a> Parser<'a> {
         if let Token::RParen = self.curr() {
             self.advance();
 
+            let return_type = self.parse_return_type()?;
+
             return Ok(Prototype {
                 name: id,
                 args: vec![],
+                return_type,
                 is_op: is_operator,
                 prec: precedence,
             });
@@ -236,9 +240,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        let return_type = self.parse_return_type()?;
+
         Ok(Prototype {
             name: id,
             args,
+            return_type,
             is_op: is_operator,
             prec: precedence,
         })

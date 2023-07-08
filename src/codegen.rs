@@ -204,6 +204,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     fn compile_module(&mut self, module: &parser::Module) {
         for node in module.body.iter() {
             match &node {
+                Node::Def(def) => {
+                    self.compile_prototype(&def.prototype);
+                    // self.compile_fn(def).unwrap();
+                },
+                _ => panic!("Unable to add prototype, only functions are currently supported at the top level")
+            }
+        }
+
+        for node in module.body.iter() {
+            match &node {
                 Node::Binary(_) => todo!(),
                 Node::Call(_) => todo!(),
                 Node::Def(def) => {
@@ -218,7 +228,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
     fn compile_fn(&mut self, node: &parser::Def) -> Result<FunctionValue<'ctx>, &'static str> {
         let proto = &node.prototype;
-      let function = self.compile_prototype(node, proto)?;
+
+        let function = self.get_function(&node.prototype.name).unwrap();
 
       // got external function, returning only compiled prototype
       if node.body.is_empty() {
@@ -270,7 +281,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
       }
   }
 
-  fn compile_prototype(&self, node: &parser::Def, proto: &Prototype) -> Result<FunctionValue<'ctx>, &'static str> {
+  fn compile_prototype(&self, proto: &Prototype) -> Result<FunctionValue<'ctx>, &'static str> {
       let mut args_types = vec![];
 
       for arg in &proto.args {
@@ -287,7 +298,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
       let args_types = args_types.as_slice();
 
-      let fn_type = match &node.return_type {
+      let fn_type = match &proto.return_type {
           Some(ret_type) => {
               match ret_type {
                   BaseType::StringType => {
