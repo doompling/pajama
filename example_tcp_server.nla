@@ -30,7 +30,7 @@
 
 class TcpServer
    host: String
-   port: Int32
+   port: Int
 
    def accept -> TcpStream
    end

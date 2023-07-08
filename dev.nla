@@ -1,7 +1,3 @@
 def main
-  other_fn()
-end
-
-def other_fn
   print("other hello!")
 end
