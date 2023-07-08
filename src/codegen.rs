@@ -202,16 +202,17 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     }
 
     fn compile_module(&mut self, module: &parser::Module) {
-        let main_fn = module.body.iter().find(|node: &&Node| {
-            if let Node::Def(def) = node {
-                def.main_fn
-            } else {
-                false
+        for node in module.body.iter() {
+            match &node {
+                Node::Binary(_) => todo!(),
+                Node::Call(_) => todo!(),
+                Node::Def(def) => {
+                    self.compile_fn(def).unwrap();
+                },
+                Node::Int(_) => todo!(),
+                Node::InterpolableString(_) => todo!(),
+                Node::Module(_) => todo!(),
             }
-        }).unwrap_or_else(|| panic!("main function not found"));
-
-        if let Node::Def(def) = main_fn {
-            self.compile_fn(def);
         }
     }
 

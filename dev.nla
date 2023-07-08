@@ -1,3 +1,7 @@
-def main
+def the_one
   print("other hello!")
+end
+
+def main
+  the_one()
 end
