@@ -1,7 +1,7 @@
 def main
-  the_one()
+   the_one("arg hello!")
 end
 
-def the_one
-  print("other hello!")
+def the_one(string_arg)
+   print(string_arg)
 end

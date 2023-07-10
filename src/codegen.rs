@@ -6,6 +6,7 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
+use inkwell::types::StructType;
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, FloatValue, FunctionValue, PointerValue,
 };
@@ -98,8 +99,14 @@ pub struct Compiler<'a, 'ctx> {
     pub fpm: &'a PassManager<FunctionValue<'ctx>>,
     pub llvm_module: &'a Module<'ctx>,
 
-    variables: HashMap<String, PointerValue<'ctx>>,
-    fn_value_opt: Option<FunctionValue<'ctx>>,
+    pub local_variables: HashMap<String, LocalVarRef<'ctx>>,
+    pub fn_value_opt: Option<FunctionValue<'ctx>>,
+}
+
+#[derive(Debug)]
+pub struct LocalVarRef<'a> {
+    alloca: PointerValue<'a>,
+    return_type: StructType<'a>,
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
@@ -174,7 +181,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             fpm: &fpm,
             llvm_module: &module,
             fn_value_opt: None,
-            variables: HashMap::new(),
+            local_variables: HashMap::new(),
         };
 
         compiler.compile_ast();
@@ -225,6 +232,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         for node in module.body.iter() {
             match &node {
                 Node::Binary(_) => todo!(),
+                Node::LocalVar(_) => todo!(),
                 Node::Call(_) => todo!(),
                 Node::Def(def) => {
                     self.compile_fn(def).unwrap();
@@ -254,15 +262,36 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         self.fn_value_opt = Some(function);
 
         // build variables map
-        self.variables.reserve(proto.args.len());
+        self.local_variables.reserve(proto.args.len());
 
         for (i, arg) in function.get_param_iter().enumerate() {
-            let arg_name = proto.args[i].name.as_str();
-            let alloca = self.create_entry_block_alloca(arg_name);
+            let arg_data = &proto.args[i];
+            let arg_name = arg_data.name.clone();
+            let return_type = match arg_data.return_type {
+                BaseType::StringType => {
+                    self.context.struct_type(
+                        &[
+                            self.context
+                                .i8_type()
+                                .ptr_type(AddressSpace::default())
+                                .into(),
+                            self.context.i32_type().into(),
+                            self.context.i32_type().into(),
+                        ],
+                        false,
+                    )
+                },
+                _ => { todo!("aaaaaaaahhhhh") }
+            };
 
-            self.builder.build_store(alloca, arg);
+            let alloca = self.create_entry_block_alloca(arg_name, return_type);
 
-            self.variables.insert(proto.args[i].name.clone(), alloca);
+            // self.builder.build_store(alloca, arg);
+
+            // let value_ref = LocalVarRef { alloca, return_type };
+            let value_ref = LocalVarRef { alloca: arg.into_pointer_value(), return_type };
+
+            self.local_variables.insert(arg_data.name.clone(), value_ref);
         }
 
         // compile body
@@ -276,6 +305,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 ReturnValue::VoidValue => self.builder.build_return(None),
             };
         }
+
+
 
         // return the whole thing after verification and optimization
         if function.verify(true) {
@@ -336,7 +367,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         .ptr_type(AddressSpace::default())
                         .fn_type(args_types, false)
                 }
-                BaseType::Void => self.context.void_type().fn_type(args_types, false),
+                // BaseType::Void => self.context.void_type().fn_type(args_types, false),
                 _ => todo!(),
             },
             None => self.context.void_type().fn_type(args_types, false),
@@ -368,7 +399,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     }
 
     /// Creates a new stack allocation instruction in the entry block of the function.
-    fn create_entry_block_alloca(&self, name: &str) -> PointerValue<'ctx> {
+    fn create_entry_block_alloca(&mut self, arg_name: String, return_type: StructType<'ctx>) -> PointerValue<'ctx> {
         let builder = self.context.create_builder();
 
         let entry = self.fn_value().get_first_basic_block().unwrap();
@@ -378,20 +409,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             None => builder.position_at_end(entry),
         }
 
-        let struct_type = self.context.struct_type(
-            &[
-                self.context
-                    .i8_type()
-                    .ptr_type(AddressSpace::default())
-                    .into(),
-                self.context.i32_type().into(),
-                self.context.i32_type().into(),
-            ],
-            false,
-        );
-
-        // fix: hardcoded to string type
-        builder.build_alloca(struct_type, name)
+        builder.build_alloca(return_type, arg_name.as_str())
     }
 
     /// Compiles the specified `Expr` into an LLVM `FloatValue`.
@@ -400,6 +418,21 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::Module(module) => Err("module todo"),
 
             Node::Def(def) => Err("def todo"),
+
+            Node::LocalVar(lvar) => {
+                match self.local_variables.get(lvar.name.as_str()) {
+                    Some(var) => {
+                        // let load_inst = self.builder.build_load(var.alloca, lvar.name.as_str());
+                        Ok(ReturnValue::ArrayPtrValue(var.alloca.as_basic_value_enum().into_pointer_value()))
+                    },
+                    None => Err("Could not find a matching variable."),
+                }
+            }
+
+            // Node::Variable(ref name) => match self.variables.get(name.as_str()) {
+            //     Some(var) => Ok(self.builder.build_load(*var, name.as_str()).into_float_value()),
+            //     None => Err("Could not find a matching variable."),
+            // },
 
             Node::InterpolableString(string) => {
                 let i8_type = self.context.i8_type();
@@ -446,13 +479,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::Int(nb) => Ok(ReturnValue::FloatValue(
                 self.context.f64_type().const_float(nb.value),
             )),
-
-            //   Node::Variable(ref _name) => todo!(),
-
-            // Node::Variable(ref name) => match self.variables.get(name.as_str()) {
-            //     Some(var) => Ok(self.builder.build_load(*var, name.as_str()).into_float_value()),
-            //     None => Err("Could not find a matching variable."),
-            // },
 
             // Node::VarIn {
             //     ref variables,

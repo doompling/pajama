@@ -25,6 +25,13 @@ pub struct InterpolableString {
     pub value: String,
 }
 
+
+#[derive(Debug)]
+pub struct LocalVar {
+    pub name: String,
+    pub return_type: Option<BaseType>
+}
+
 #[derive(Debug)]
 pub struct Module {
     pub body: Vec<Node>,
@@ -38,6 +45,7 @@ pub enum Node {
     Int(Int),
     InterpolableString(InterpolableString),
     Module(Module),
+    LocalVar(LocalVar),
 }
 
 // impl Node {
@@ -219,7 +227,7 @@ impl<'a> Parser<'a> {
             match self.curr() {
                 Token::Ident(pos, name) => args.push(Arg {
                     name,
-                    return_type: BaseType::Undef,
+                    return_type: BaseType::StringType,
                 }),
                 _ => return Err("Expected identifier in parameter declaration."),
             }
@@ -352,6 +360,8 @@ impl<'a> Parser<'a> {
             _ => return Err("Expected identifier."),
         };
 
+        println!("{:#?}", self.curr());
+
         match self.curr() {
             Token::LParen => {
                 self.advance()?;
@@ -390,10 +400,10 @@ impl<'a> Parser<'a> {
                 Ok(Node::Call(Call { fn_name: id, args }))
             }
 
-            // _ => Ok(Node::Variable(id)),
-            _ => {
-                todo!("variable reference")
-            }
+            _ => Ok(Node::LocalVar(LocalVar { name: id, return_type: Some(BaseType::Undef) })),
+            // _ => {
+            //     todo!("variable reference")
+            // }
         }
     }
 
