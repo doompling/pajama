@@ -3,6 +3,12 @@ use std::collections::HashMap;
 use crate::lexer::Token;
 
 #[derive(Debug)]
+pub struct AssignLocalVar {
+    pub name: String,
+    pub value: Box<Node>,
+}
+
+#[derive(Debug)]
 pub struct Binary {
     pub op: char,
     pub left: Box<Node>,
@@ -39,6 +45,7 @@ pub struct Module {
 
 #[derive(Debug)]
 pub enum Node {
+    AssignLocalVar(AssignLocalVar),
     Binary(Binary),
     Call(Call),
     Def(Def),
@@ -135,19 +142,12 @@ impl<'a> Parser<'a> {
         // Parse signature of function
         let proto = self.parse_prototype()?;
 
-        self.advance_optional_space();
-
-        match self.curr() {
-            Token::NewLine(_) => {
-                self.advance();
-            }
-            _ => return Err("Expected newline after function return type"),
-        }
+        self.advance_optional_whitespace();
 
         let mut body = vec![];
 
         loop {
-            self.advance_optional_space();
+            self.advance_optional_whitespace();
 
             match self.current()? {
                 Token::End => {
@@ -187,14 +187,14 @@ impl<'a> Parser<'a> {
         self.advance_optional_space();
 
         match self.curr() {
-            Token::LParen => (),
+            Token::LParen => { self.advance(); },
             Token::NewLine(_) => {
-                let return_type = self.parse_return_type()?;
+                self.advance();
 
                 return Ok(Prototype {
                     name: id,
                     args: vec![],
-                    return_type,
+                    return_type: None,
                     is_op: is_operator,
                     prec: precedence,
                 });
@@ -203,7 +203,6 @@ impl<'a> Parser<'a> {
         }
 
         self.advance_optional_whitespace();
-        self.advance()?;
 
         if let Token::RParen = self.curr() {
             self.advance();
@@ -260,38 +259,30 @@ impl<'a> Parser<'a> {
 
     fn parse_return_type(&mut self) -> Result<Option<BaseType>, &'static str> {
         match self.current()? {
+            Token::NewLine(_) => {
+                self.advance();
+                return Ok(None)
+            }
             Token::Arrow => {
                 self.advance();
             }
             Token::Space(_) => {
-                if let Ok(next_token) = self.peek() {
-                    match next_token {
-                        Token::Arrow => {
-                            self.advance();
-                            self.advance();
-                            self.advance_optional_whitespace();
-                        }
-                        Token::NewLine(_) => {
-                            self.advance();
-                            self.advance();
-                            return Ok(None);
-                        }
-                        _ => return Err("Expected an arrow to indicate a return type"),
+                self.advance();
+
+                match self.curr() {
+                    Token::Arrow => {
+                        self.advance();
+                        self.advance_optional_space();
                     }
+                    Token::NewLine(_) => {
+                        self.advance();
+                        return Ok(None);
+                    }
+                    _ => return Err("Expected an arrow to indicate a return type"),
                 }
             }
-            _ => {}
+            _ => { return Err("Expected an end to the function definition") }
         }
-
-        match self.peek()? {
-            Token::Arrow => {
-                self.advance_optional_whitespace();
-                self.advance();
-            }
-            _ => return Ok(None),
-        }
-
-        self.advance_optional_whitespace();
 
         match self.curr() {
             Token::Ident(pos, name) => match name.as_ref() {
@@ -305,7 +296,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parses any expression.
     fn parse_expr(&mut self) -> Result<Node, &'static str> {
         match self.parse_unary_expr() {
             Ok(left) => {
@@ -344,6 +334,7 @@ impl<'a> Parser<'a> {
             Token::StringLiteral(_, _) => self.parse_string_expr(),
             Token::LParen => self.parse_paren_expr(),
             _ => {
+                panic!("{:#?}", self.curr());
                 panic!("{:#?}", self);
                 Err("Unknown expression.")
             }
@@ -359,8 +350,6 @@ impl<'a> Parser<'a> {
             }
             _ => return Err("Expected identifier."),
         };
-
-        println!("{:#?}", self.curr());
 
         match self.curr() {
             Token::LParen => {
@@ -400,10 +389,22 @@ impl<'a> Parser<'a> {
                 Ok(Node::Call(Call { fn_name: id, args }))
             }
 
-            _ => Ok(Node::LocalVar(LocalVar { name: id, return_type: Some(BaseType::Undef) })),
-            // _ => {
-            //     todo!("variable reference")
-            // }
+            _ => {
+                self.advance_optional_space();
+
+                match self.curr() {
+                    Token::Assign => {
+                        self.advance()?;
+                        self.advance_optional_whitespace();
+
+                        Ok(Node::AssignLocalVar(AssignLocalVar {
+                            name: id,
+                            value: Box::new(self.parse_expr()?)
+                        }))
+                    }
+                    _ => Ok(Node::LocalVar(LocalVar { name: id, return_type: Some(BaseType::StringType) }))
+                }
+            },
         }
     }
 

@@ -1,7 +1,13 @@
 def main
-   the_one("arg hello!")
+   first_arg = the_one("arg hello!")
+   the_second(first_arg)
 end
 
-def the_one(string_arg)
-   print(string_arg)
+def the_one(string_arg1) -> String
+   print(string_arg1)
+   string_arg1
+end
+
+def the_second(string_arg2)
+   print(string_arg2)
 end

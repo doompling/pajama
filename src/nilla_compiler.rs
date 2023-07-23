@@ -24,7 +24,6 @@ impl NillaCompiler {
     fn build_op_precedence_map() -> HashMap<char, i32> {
         let mut op_precedence_map = HashMap::with_capacity(6);
 
-        op_precedence_map.insert('=', 2);
         op_precedence_map.insert('<', 10);
         op_precedence_map.insert('+', 20);
         op_precedence_map.insert('-', 20);

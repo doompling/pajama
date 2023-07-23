@@ -10,6 +10,7 @@ pub struct TokenPosition {
 #[derive(Debug, Clone)]
 pub enum Token {
     Arrow,
+    Assign,
     Binary,
     Comma,
     Def,
@@ -21,9 +22,9 @@ pub enum Token {
     Number(TokenPosition, f64),
     Op(char),
     RParen,
+    Space(usize),
     StringLiteral(TokenPosition, String),
     Unary,
-    Space(usize),
 }
 
 pub struct Lexer<'a> {
@@ -253,6 +254,11 @@ impl Lexer<'_> {
 
             '>' => {
                 Token::Op('>')
+            }
+
+
+            '=' => {
+                Token::Assign
             }
 
             _ => {
