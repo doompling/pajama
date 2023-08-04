@@ -1,13 +1,8 @@
 def main
-   first_arg = the_one("arg hello!")
-   the_second(first_arg)
+   other_type = 123
+   other_fn(other_type)
 end
 
-def the_one(string_arg1) -> String
-   print(string_arg1)
-   string_arg1
-end
-
-def the_second(string_arg2)
-   print(string_arg2)
+def other_fn(thing Int)
+   print_int(thing)
 end

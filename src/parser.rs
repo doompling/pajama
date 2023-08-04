@@ -23,7 +23,7 @@ pub struct Call {
 
 #[derive(Debug)]
 pub struct Int {
-    pub value: f64,
+    pub value: u64,
 }
 
 #[derive(Debug)]
@@ -64,6 +64,7 @@ pub enum Node {
 
 #[derive(Debug)]
 pub enum BaseType {
+    Int,
     StringType,
     Void,
     Undef,
@@ -223,16 +224,32 @@ impl<'a> Parser<'a> {
         loop {
             self.advance_optional_whitespace();
 
-            match self.curr() {
-                Token::Ident(pos, name) => args.push(Arg {
-                    name,
-                    return_type: BaseType::StringType,
-                }),
+            let arg_name = match self.curr() {
+                Token::Ident(pos, name) => name,
                 _ => return Err("Expected identifier in parameter declaration."),
-            }
+            };
 
-            self.advance_optional_whitespace();
             self.advance()?;
+            self.advance_optional_space();
+
+            let type_name = match self.curr() {
+                Token::Ident(pos, type_name) => type_name,
+                _ => return Err("Expected type name for argument"),
+            };
+
+            let return_type = match type_name.as_str() {
+                "Str" => BaseType::StringType,
+                "Int" => BaseType::Int,
+                _ => return Err("Expected return type Str or Int")
+            };
+
+            args.push(Arg {
+                name: arg_name,
+                return_type,
+            });
+
+            self.advance()?;
+            self.advance_optional_whitespace();
 
             match self.curr() {
                 Token::RParen => {
@@ -402,7 +419,9 @@ impl<'a> Parser<'a> {
                             value: Box::new(self.parse_expr()?)
                         }))
                     }
-                    _ => Ok(Node::LocalVar(LocalVar { name: id, return_type: Some(BaseType::StringType) }))
+                    _ => {
+                        Ok(Node::LocalVar(LocalVar { name: id, return_type: Some(BaseType::Undef) }))
+                    }
                 }
             },
         }

@@ -19,7 +19,7 @@ pub enum Token {
     Illegal(TokenPosition, String),
     LParen,
     NewLine(usize),
-    Number(TokenPosition, f64),
+    Number(TokenPosition, u64),
     Op(char),
     RParen,
     Space(usize),
@@ -176,12 +176,12 @@ impl Lexer<'_> {
                             self.column_pos += 1;
                             pos += 1;
                         },
-                        '.' => {
-                            self.chars.next();
+                        // '.' => {
+                        //     self.chars.next();
 
-                            self.column_pos += 1;
-                            pos += 1;
-                        },
+                        //     self.column_pos += 1;
+                        //     pos += 1;
+                        // },
                         _ => { break }
                     }
                 }

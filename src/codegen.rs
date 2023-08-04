@@ -6,13 +6,20 @@ use inkwell::context::Context;
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
 use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
-use inkwell::types::{StructType, VoidType};
+use inkwell::types::{StructType, VoidType, AnyTypeEnum, IntType, BasicType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, FloatValue, FunctionValue, PointerValue,
+    BasicMetadataValueEnum, BasicValue, FloatValue, FunctionValue, PointerValue, AsValueRef, IntValue,
 };
 use inkwell::{AddressSpace, OptimizationLevel};
 
 use crate::parser::{self, *};
+
+#[derive(Debug)]
+pub enum LLVMType<'a> {
+    StructType(StructType<'a>),
+    IntType(IntType<'a>),
+    VoidType(VoidType<'a>),
+}
 
 #[repr(C)]
 pub struct NillaString {
@@ -76,8 +83,16 @@ pub fn print(nilla_string: *const NillaString) {
     }
 }
 
+#[no_mangle]
+pub fn print_int(num: i32) {
+    println!("{:#?}", num);
+}
+
 #[used]
 static EXTERNAL_FNS1: [fn(*const NillaString); 1] = [print];
+
+#[used]
+static EXTERNAL_FNS3: [fn(i32); 1] = [print_int];
 
 #[used]
 static EXTERNAL_FNS2: [fn(bytes: *const u8, initial_length: i32) -> *mut NillaString; 1] =
@@ -85,7 +100,7 @@ static EXTERNAL_FNS2: [fn(bytes: *const u8, initial_length: i32) -> *mut NillaSt
 
 #[derive(Debug)]
 pub enum ReturnValue<'a> {
-    FloatValue(FloatValue<'a>),
+    IntValue(IntValue<'a>),
     ArrayPtrValue(PointerValue<'a>),
     VoidValue,
 }
@@ -106,7 +121,7 @@ pub struct Compiler<'a, 'ctx> {
 #[derive(Debug)]
 pub struct LocalVarRef<'a> {
     alloca: PointerValue<'a>,
-    return_type: StructType<'a>,
+    return_type: LLVMType<'a>,
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
@@ -173,6 +188,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let print_args = &[struct_ptr_type.into()];
         let print_function_type = context.void_type().fn_type(print_args, false);
         module.add_function("print", print_function_type, None);
+
+        let print_num_args = &[context.i32_type().into()];
+        let print_function_type = context.void_type().fn_type(print_num_args, false);
+        module.add_function("print_int", print_function_type, None);
 
         let mut compiler = Compiler {
             parser_result: &parser_result,
@@ -269,31 +288,59 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         for (i, arg) in function.get_param_iter().enumerate() {
             let arg_data = &proto.args[i];
-            let return_type = match arg_data.return_type {
+
+            match arg_data.return_type {
                 BaseType::StringType => {
-                    self.context.struct_type(
-                        &[
-                            self.context
-                                .i8_type()
-                                .ptr_type(AddressSpace::default())
-                                .into(),
-                            self.context.i32_type().into(),
-                            self.context.i32_type().into(),
-                        ],
-                        false,
-                    )
+                    let return_type = LLVMType::StructType(
+                        self.context.struct_type(
+                            &[
+                                self.context
+                                    .i8_type()
+                                    .ptr_type(AddressSpace::default())
+                                    .into(),
+                                self.context.i32_type().into(),
+                                self.context.i32_type().into(),
+                            ],
+                            false,
+                        )
+                    );
+
+                    let alloca = self.create_entry_block_alloca(&arg_data.name, &return_type);
+                    let loaded_val = self.builder.build_load(arg.into_pointer_value(), &arg_data.name);
+
+                    self.builder.build_store(alloca, loaded_val);
+
+                    self.local_variables.insert(
+                        arg_data.name.clone(),
+                        LocalVarRef { alloca, return_type },
+                    );
                 },
+                BaseType::Int => {
+                    let return_type = LLVMType::IntType(self.context.i32_type());
+
+                    let alloca = self.create_entry_block_alloca(&arg_data.name, &return_type);
+                    // let loaded_val = self.builder.build_load(arg.into_pointer_value(), &arg_data.name);
+                    let loaded_val = arg.into_int_value();
+
+                    self.builder.build_store(alloca, loaded_val);
+
+                    self.local_variables.insert(
+                        arg_data.name.clone(),
+                        LocalVarRef { alloca, return_type },
+                    );
+                }
                 _ => { todo!("aaaaaaaahhhhh") }
             };
 
-            let alloca = self.create_entry_block_alloca(&arg_data.name, return_type);
-            let loaded_val = self.builder.build_load(arg.into_pointer_value(), &arg_data.name);
+            // let alloca = self.create_entry_block_alloca(&arg_data.name, &return_type);
+            // let loaded_val = self.builder.build_load(arg.into_pointer_value(), &arg_data.name);
 
-            self.builder.build_store(alloca, loaded_val);
-            self.local_variables.insert(
-                arg_data.name.clone(),
-                LocalVarRef { alloca, return_type },
-            );
+            // self.builder.build_store(alloca, loaded_val);
+
+            // self.local_variables.insert(
+            //     arg_data.name.clone(),
+            //     LocalVarRef { alloca, return_type },
+            // );
         }
 
         // temperary solution until `ret` keyword is implemented
@@ -304,18 +351,41 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             last_body = Some(self.compile_expr(node)?);
         }
 
-        match last_body {
-            Some(ret_type) => {
-                match ret_type {
-                    ReturnValue::FloatValue(value) => self.builder.build_return(Some(&value)),
-                    ReturnValue::ArrayPtrValue(value) => self.builder.build_return(Some(&value)),
-                    ReturnValue::VoidValue => self.builder.build_return(None),
+        match &node.prototype.return_type {
+            Some(rt) => {
+                match *rt {
+                    BaseType::Int => {
+                        match last_body {
+                            Some(ret_type) => {
+                                match ret_type {
+                                    ReturnValue::IntValue(value) => self.builder.build_return(Some(&value)),
+                                    _ => panic!("Expected Int"),
+                                }
+                            },
+                            None => self.builder.build_return(None)
+                        };
+                    },
+                    BaseType::StringType => {
+                        match last_body {
+                            Some(ret_type) => {
+                                match ret_type {
+                                    ReturnValue::ArrayPtrValue(value) => self.builder.build_return(Some(&value)),
+                                    _ => panic!("Expected String"),
+                                }
+                            },
+                            None => self.builder.build_return(None)
+                        };
+                    },
+                    BaseType::Void => {
+                        self.builder.build_return(None);
+                    }
+                    BaseType::Undef => todo!(),
                 }
-            },
-            None => self.builder.build_return(None)
-        };
-
-        // println!("{}", self.llvm_module.print_to_string().to_string());
+            }
+            None => {
+                self.builder.build_return(None);
+            }
+        }
 
         // return the whole thing after verification and optimization
         if function.verify(true) {
@@ -323,6 +393,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
             Ok(function)
         } else {
+            println!("{}", self.llvm_module.print_to_string().to_string());
+
             unsafe {
                 function.delete();
             }
@@ -351,6 +423,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     let ptr = struct_type.ptr_type(AddressSpace::default()).into();
 
                     args_types.push(ptr);
+                }
+                BaseType::Int => {
+                    args_types.push(self.context.i32_type().into());
                 }
                 _ => todo!(),
             };
@@ -408,9 +483,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     }
 
     /// Creates a new stack allocation instruction in the entry block of the function.
-    fn create_entry_block_alloca(&mut self, arg_name: &String, return_type: StructType<'ctx>) -> PointerValue<'ctx> {
+    fn create_entry_block_alloca(&mut self, arg_name: &String, return_type: &LLVMType<'ctx>) -> PointerValue<'ctx> {
         let builder = self.context.create_builder();
-
         let entry = self.fn_value().get_first_basic_block().unwrap();
 
         match entry.get_first_instruction() {
@@ -418,7 +492,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             None => builder.position_at_end(entry),
         }
 
-        builder.build_alloca(return_type, arg_name.as_str())
+        match *return_type {
+            LLVMType::StructType(llvm_type) => builder.build_alloca(llvm_type, arg_name.as_str()),
+            LLVMType::IntType(llvm_type) => builder.build_alloca(llvm_type, arg_name.as_str()),
+            LLVMType::VoidType(_llvm_type) => { panic!("void shouldnt be assigned") },
+        }
     }
 
     /// Compiles the specified `Expr` into an LLVM `FloatValue`.
@@ -432,21 +510,31 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 let lvar_name = &asgn_lvar.name;
                 let initial_value = self.compile_expr(&asgn_lvar.value)?;
                 let (alloca, return_type) = match &initial_value {
-                    ReturnValue::FloatValue(_) => todo!(),
+                    ReturnValue::IntValue(fv) => {
+                        let ret_type = LLVMType::IntType(self.context.i32_type());
+                        let alloca = self.create_entry_block_alloca(lvar_name, &ret_type);
+
+                        self.builder.build_store(alloca, *fv);
+
+                        (alloca, ret_type)
+
+                    },
                     ReturnValue::ArrayPtrValue(pv) => {
-                        let ret_type = self.context.struct_type(
-                            &[
-                                self.context
-                                    .i8_type()
-                                    .ptr_type(AddressSpace::default())
-                                    .into(),
-                                self.context.i32_type().into(),
-                                self.context.i32_type().into(),
-                            ],
-                            false,
+                        let ret_type = LLVMType::StructType(
+                                self.context.struct_type(
+                                &[
+                                    self.context
+                                        .i8_type()
+                                        .ptr_type(AddressSpace::default())
+                                        .into(),
+                                    self.context.i32_type().into(),
+                                    self.context.i32_type().into(),
+                                ],
+                                false,
+                            )
                         );
 
-                        let alloca = self.create_entry_block_alloca(lvar_name, ret_type);
+                        let alloca = self.create_entry_block_alloca(lvar_name, &ret_type);
                         let loaded_val = self.builder.build_load(*pv, lvar_name);
 
                         self.builder.build_store(alloca, loaded_val);
@@ -465,8 +553,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::LocalVar(lvar) => {
                 match self.local_variables.get(lvar.name.as_str()) {
                     Some(var) => {
+                        match var.return_type {
+                            LLVMType::StructType(_) => Ok(ReturnValue::ArrayPtrValue(var.alloca.as_basic_value_enum().into_pointer_value())),
+                            LLVMType::IntType(_) => {
+                                let load_inst = self.builder.build_load(var.alloca, lvar.name.as_str());
+                                Ok(ReturnValue::IntValue(load_inst.into_int_value()))
+                            },
+                            LLVMType::VoidType(_) => Ok(ReturnValue::VoidValue),
+                        }
+
                         // let load_inst = self.builder.build_load(var.alloca, lvar.name.as_str());
-                        Ok(ReturnValue::ArrayPtrValue(var.alloca.as_basic_value_enum().into_pointer_value()))
                     },
                     None => Err("Could not find a matching variable."),
                 }
@@ -522,8 +618,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 ))
             }
 
-            Node::Int(nb) => Ok(ReturnValue::FloatValue(
-                self.context.f64_type().const_float(nb.value),
+            Node::Int(nb) => Ok(ReturnValue::IntValue(
+                // self.context.f64_type().const_float(nb.value),
+                self.context.i32_type().const_int(nb.value, false),
             )),
 
             // Node::VarIn {
@@ -566,14 +663,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     let mut compiled_args = Vec::with_capacity(call.args.len());
 
                     for arg in &call.args {
+                        println!("{:#?}", arg);
                         compiled_args.push(self.compile_expr(&arg)?);
                     }
 
                     let argsv: Vec<BasicMetadataValueEnum> = compiled_args
                         .iter()
                         .map(|val| match *val {
-                            ReturnValue::FloatValue(float_value) => float_value.into(),
-                            ReturnValue::ArrayPtrValue(string_ptr) => string_ptr.into(),
+                            ReturnValue::IntValue(float_value) => float_value.into(),
+                            // ReturnValue::ArrayPtrValue(string_ptr) => string_ptr.into(),
+                            ReturnValue::ArrayPtrValue(string_ptr) => panic!("whaaa"),
                             _ => todo!(),
                         })
                         .collect();
@@ -588,8 +687,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                             inkwell::values::BasicValueEnum::PointerValue(value) => {
                                 Ok(ReturnValue::ArrayPtrValue(value))
                             }
-                            inkwell::values::BasicValueEnum::FloatValue(value) => {
-                                Ok(ReturnValue::FloatValue(value))
+                            inkwell::values::BasicValueEnum::IntValue(value) => {
+                                Ok(ReturnValue::IntValue(value))
                             }
                             _ => todo!(),
                         },
