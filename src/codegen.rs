@@ -671,8 +671,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         .iter()
                         .map(|val| match *val {
                             ReturnValue::IntValue(float_value) => float_value.into(),
-                            // ReturnValue::ArrayPtrValue(string_ptr) => string_ptr.into(),
-                            ReturnValue::ArrayPtrValue(string_ptr) => panic!("whaaa"),
+                            ReturnValue::ArrayPtrValue(string_ptr) => string_ptr.into(),
                             _ => todo!(),
                         })
                         .collect();
