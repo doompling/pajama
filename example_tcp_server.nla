@@ -1,6 +1,62 @@
-# namespace base
-#    namespace net
-#       class TcpServer
+trait ToString
+   def to_string() -> String;
+end
+
+class Int
+   impl ToString
+      def to_string() -> String
+         int_to_string(self)
+      end
+   end
+end
+
+def print(value ToString)
+   print_str(value.to_string())
+end
+
+def bla
+   print(123)
+end
+
+enum Thing
+   One(One)
+end
+
+inst = MyClass(name)
+val = Thing::One(One(name))
+inst.chain_meth(val))
+
+inst = MyClass.build(name)
+
+trait Iterator
+   type Item
+
+   def items -> Collection;
+
+   def each =>(item Item) -> Self
+      # for item in self {
+      for item in items() {
+         yield(item)
+      }
+
+      ret self
+   end
+end
+
+class MyClass
+   def self.build(name Str) -> Self
+      Self(name)
+   end
+
+   impl Iterator
+      def items
+   end
+end
+
+
+# module base
+#    module net
+#       class TcpListener
 #          host: String
 #          port: Int32
 
@@ -17,7 +73,7 @@
 #       end
 #    end
 
-#    namespace filesystem
+#    mod filesystem
 #       class File
 #          class_def read(path) -> String
 #          end
@@ -26,9 +82,9 @@
 # end
 
 # use base::fs::File
-# use base::net::TcpServer
+# use base::net::TcpListener
 
-class TcpServer
+class TcpListener
    host: String
    port: Int
 
@@ -37,23 +93,36 @@ class TcpServer
 end
 
 class TcpStream
-   def read -> String
+   host: Str
+   port: Int
+
+   pub new(host Path) -> TcpStream
+      TcpStream {
+         host
+      }
    end
 
-   def write(string)
+   read -> String
+      TcpStream.other_method()
+   end
+
+   write ->
+      # logic here
+      # logic here
+      # logic here
    end
 end
 
 class File
-   class_def read(path) -> String
+   def:: read(path String) -> String
    end
 end
 
-def handle_connection(stream)
+def handle_connection(stream TcpStream)
    print(stream.read)
 
    status_line = "HTTP/1.1 200 OK"
-   contents = File.read("hello.html")
+   contents = File.read("hello.html").unwrap()
    length = contents.length
    response = "#{status_line}\r\nContent-Length: #{length}\r\n\r\n#{contents}"
 
@@ -61,7 +130,7 @@ def handle_connection(stream)
 end
 
 def main
-   server = TcpServer(
+   server = TcpListener.bind(
       host: "127.0.0.1",
       port: 7878
    )

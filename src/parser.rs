@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref};
 
 use crate::lexer::Token;
 
@@ -22,6 +22,12 @@ pub struct Call {
 }
 
 #[derive(Debug)]
+pub struct Send {
+    pub receiver: Box<Node>,
+    pub message: Box<Node>,
+}
+
+#[derive(Debug)]
 pub struct Int {
     pub value: u64,
 }
@@ -31,11 +37,10 @@ pub struct InterpolableString {
     pub value: String,
 }
 
-
 #[derive(Debug)]
 pub struct LocalVar {
     pub name: String,
-    pub return_type: Option<BaseType>
+    pub return_type: Option<BaseType>,
 }
 
 #[derive(Debug)]
@@ -44,14 +49,40 @@ pub struct Module {
 }
 
 #[derive(Debug)]
+pub struct Class {
+    pub name: String,
+    pub body: Vec<Node>,
+}
+
+#[derive(Debug)]
+pub struct Trait {
+    pub name: String,
+    pub body: Vec<Node>,
+}
+
+#[derive(Debug)]
+pub struct Impl {
+    pub name: String,
+    pub body: Vec<Node>,
+}
+
+#[derive(Debug)]
+pub struct SelfRef {}
+
+#[derive(Debug)]
 pub enum Node {
+    SelfRef(SelfRef),
     AssignLocalVar(AssignLocalVar),
     Binary(Binary),
     Call(Call),
+    Send(Send),
     Def(Def),
     Int(Int),
     InterpolableString(InterpolableString),
     Module(Module),
+    Impl(Impl),
+    Class(Class),
+    Trait(Trait),
     LocalVar(LocalVar),
 }
 
@@ -67,7 +98,7 @@ pub enum BaseType {
     Int,
     StringType,
     Void,
-    Undef,
+    Undef(String),
 }
 
 #[derive(Debug)]
@@ -122,12 +153,16 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let result = match self.current()? {
+            let results = match self.current()? {
+                Token::Class => self.parse_class(),
+                Token::Trait => self.parse_trait(),
                 Token::Def => self.parse_def(),
-                _ => Err("Expected function definition"),
+                _ => Err("Expected class, def, or trait"),
             };
 
-            body.push(result?);
+            for result in results? {
+                body.push(result);
+            }
         }
 
         Ok(ParserResult {
@@ -135,8 +170,151 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses a user-defined function.
-    fn parse_def(&mut self) -> Result<Node, &'static str> {
+    fn parse_class(&mut self) -> Result<Vec<Node>, &'static str> {
+        // Advance past the keyword
+        self.pos += 1;
+
+        self.advance_optional_space();
+
+        let name = match self.current()? {
+            Token::Const(pos, name) => {
+                self.advance()?;
+                name
+            }
+            _ => return Err("Expected identifier in prototype declaration."),
+        };
+
+        self.advance_optional_space();
+
+        match self.curr() {
+            Token::NewLine(_) => self.advance(),
+            _ => return Err("Expected a new line after class name"),
+        };
+
+        let mut functions = vec![];
+
+        loop {
+            self.advance_optional_whitespace();
+
+            let results = match self.current()? {
+                Token::Def => self.parse_def(),
+                Token::Impl => self.parse_impl(),
+                Token::End => {
+                    self.advance();
+                    break;
+                }
+                _ => return Err("Expected def, impl, or end to to the class."),
+            };
+
+            for result in results? {
+                functions.push(result)
+            }
+        }
+
+        // Return new function
+        Ok(vec![Node::Class(Class {
+            name,
+            body: functions,
+        })])
+    }
+
+    fn parse_trait(&mut self) -> Result<Vec<Node>, &'static str> {
+        let mut functions = vec![];
+
+        // Advance past the keyword
+        self.pos += 1;
+
+        self.advance_optional_space();
+
+        let name = match self.current()? {
+            Token::Const(pos, name) => {
+                self.advance()?;
+                name
+            }
+            _ => return Err("Expected identifier in prototype declaration."),
+        };
+
+        self.advance_optional_space();
+
+        match self.curr() {
+            Token::NewLine(_) => self.advance(),
+            _ => return Err("Expected a new line after class name"),
+        };
+
+        loop {
+            self.advance_optional_whitespace();
+
+            let results = match self.current()? {
+                Token::Def => self.parse_def(),
+                Token::End => {
+                    self.advance();
+                    break;
+                }
+                _ => return Err("Expected only def within a trait"),
+            };
+
+            for result in results? {
+                functions.push(result)
+            }
+        }
+
+        // Return new function
+        Ok(vec![Node::Trait(Trait {
+            name,
+            body: functions,
+        })])
+    }
+
+    fn parse_impl(&mut self) -> Result<Vec<Node>, &'static str> {
+        // Advance past the keyword
+        self.pos += 1;
+
+        self.advance_optional_space();
+
+        let name = match self.current()? {
+            Token::Const(pos, name) => {
+                self.advance()?;
+                name
+            }
+            _ => return Err("Expected identifier in impl declaration."),
+        };
+
+        self.advance_optional_space();
+
+        match self.curr() {
+            Token::NewLine(_) => self.advance(),
+            _ => return Err("Expected a new line after impl name"),
+        };
+
+        let mut functions = vec![];
+
+        loop {
+            self.advance_optional_whitespace();
+
+            let results = match self.current()? {
+                Token::Def => self.parse_def(),
+                Token::End => {
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    return Err("Expected only def within an impl block");
+                }
+            };
+
+            for result in results? {
+                functions.push(result)
+            }
+        }
+
+        // Return new function
+        Ok(vec![Node::Impl(Impl {
+            name,
+            body: functions,
+        })])
+    }
+
+    fn parse_def(&mut self) -> Result<Vec<Node>, &'static str> {
         // Eat 'def' keyword
         self.pos += 1;
 
@@ -160,11 +338,11 @@ impl<'a> Parser<'a> {
         }
 
         // Return new function
-        Ok(Node::Def(Def {
+        Ok(vec![Node::Def(Def {
             main_fn: proto.name == "main",
             prototype: proto,
             body,
-        }))
+        })])
     }
 
     /// Parses the prototype of a function, whether external or user-defined.
@@ -188,7 +366,9 @@ impl<'a> Parser<'a> {
         self.advance_optional_space();
 
         match self.curr() {
-            Token::LParen => { self.advance(); },
+            Token::LParen => {
+                self.advance();
+            }
             Token::NewLine(_) => {
                 self.advance();
 
@@ -233,14 +413,14 @@ impl<'a> Parser<'a> {
             self.advance_optional_space();
 
             let type_name = match self.curr() {
-                Token::Ident(pos, type_name) => type_name,
+                Token::Const(pos, type_name) => type_name,
                 _ => return Err("Expected type name for argument"),
             };
 
             let return_type = match type_name.as_str() {
                 "Str" => BaseType::StringType,
                 "Int" => BaseType::Int,
-                _ => return Err("Expected return type Str or Int")
+                _ => BaseType::Undef(type_name),
             };
 
             args.push(Arg {
@@ -278,7 +458,7 @@ impl<'a> Parser<'a> {
         match self.current()? {
             Token::NewLine(_) => {
                 self.advance();
-                return Ok(None)
+                return Ok(None);
             }
             Token::Arrow => {
                 self.advance();
@@ -298,16 +478,23 @@ impl<'a> Parser<'a> {
                     _ => return Err("Expected an arrow to indicate a return type"),
                 }
             }
-            _ => { return Err("Expected an end to the function definition") }
+            _ => return Err("Expected an end to the function definition"),
         }
 
         match self.curr() {
-            Token::Ident(pos, name) => match name.as_ref() {
-                "String" => {
+            Token::Const(pos, name) => match name.as_ref() {
+                "Str" => {
                     self.advance();
                     Ok(Some(BaseType::StringType))
                 }
-                _ => Err("Only String return type is currently supported"),
+                "Int" => {
+                    self.advance();
+                    Ok(Some(BaseType::Int))
+                }
+                _ => {
+                    self.advance();
+                    Ok(Some(BaseType::Undef(name)))
+                }
             },
             _ => Err("Expected a return type after an arrow"),
         }
@@ -343,30 +530,49 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// Parses a primary expression (an identifier, a number or a parenthesized expression).
     fn parse_primary(&mut self) -> Result<Node, &'static str> {
-        match self.curr() {
+        let node = match self.curr() {
             Token::Ident(_, _) => self.parse_ident_expr(),
             Token::Number(_, _) => self.parse_nb_expr(),
             Token::StringLiteral(_, _) => self.parse_string_expr(),
             Token::LParen => self.parse_paren_expr(),
+            Token::SelfRef => self.parse_self_ref_expr(),
             _ => {
                 panic!("{:#?}", self.curr());
                 panic!("{:#?}", self);
                 Err("Unknown expression.")
             }
+        };
+
+        self.advance_optional_whitespace();
+
+        match self.curr() {
+            Token::Dot => self.parse_send_expr(node),
+            _ => node
+        }
+    }
+
+    fn parse_self_ref_expr(&mut self) -> Result<Node, &'static str> {
+        match self.curr() {
+            Token::SelfRef => {
+                self.advance();
+                Ok(Node::SelfRef(SelfRef {}))
+            }
+            _ => Err("Expected SelfRef"),
         }
     }
 
     /// Parses an expression that starts with an identifier (either a variable or a function call).
     fn parse_ident_expr(&mut self) -> Result<Node, &'static str> {
-        let id = match self.curr() {
+        let ident_name = match self.curr() {
             Token::Ident(pos, id) => {
                 self.advance();
                 id
             }
             _ => return Err("Expected identifier."),
         };
+
+        self.advance_optional_whitespace();
 
         match self.curr() {
             Token::LParen => {
@@ -377,7 +583,7 @@ impl<'a> Parser<'a> {
                     self.advance();
 
                     return Ok(Node::Call(Call {
-                        fn_name: id,
+                        fn_name: ident_name,
                         args: vec![],
                     }));
                 }
@@ -403,7 +609,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                Ok(Node::Call(Call { fn_name: id, args }))
+                Ok(Node::Call(Call { fn_name: ident_name, args }))
             }
 
             _ => {
@@ -415,15 +621,45 @@ impl<'a> Parser<'a> {
                         self.advance_optional_whitespace();
 
                         Ok(Node::AssignLocalVar(AssignLocalVar {
-                            name: id,
-                            value: Box::new(self.parse_expr()?)
+                            name: ident_name,
+                            value: Box::new(self.parse_expr()?),
                         }))
                     }
-                    _ => {
-                        Ok(Node::LocalVar(LocalVar { name: id, return_type: Some(BaseType::Undef) }))
-                    }
+                    _ => Ok(Node::LocalVar(LocalVar {
+                        name: ident_name,
+                        return_type: Some(BaseType::Undef("".to_string())),
+                    })),
+                }
+            }
+        }
+    }
+
+    fn parse_send_expr(&mut self, receiver: Result<Node, &'static str>) -> Result<Node, &'static str> {
+        let receiver = match receiver {
+            Ok(node) => node,
+            Err(err) => return Err(err),
+        };
+
+        self.advance();
+
+        let send_node = match self.curr() {
+            Token::Ident(pos, name) => {
+                match self.parse_ident_expr() {
+                    Ok(node) => Ok(Node::Send(Send {
+                        receiver: Box::new(receiver),
+                        message: Box::new(node)
+                    })),
+                    Err(err) => Err(err),
                 }
             },
+            _ => Err("Expected an identifier after a dot"),
+        };
+
+        self.advance_optional_whitespace();
+
+        match self.curr() {
+            Token::Dot => self.parse_send_expr(send_node),
+            _ => send_node,
         }
     }
 
@@ -563,17 +799,16 @@ impl<'a> Parser<'a> {
     }
 
     fn advance_optional_whitespace(&mut self) {
-        match self.current() {
-            Ok(token) => match token {
+        while let Ok(token) = self.current() {
+            match token {
                 Token::Space(_) => {
                     self.advance();
                 }
                 Token::NewLine(_) => {
                     self.advance();
                 }
-                _ => {}
-            },
-            Err(_) => {}
+                _ => break,
+            }
         }
     }
 

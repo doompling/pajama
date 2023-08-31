@@ -1,8 +1,23 @@
-def main
-   other_type = 123
-   other_fn(other_type)
+class Str
+   impl ToString
+      def to_string() -> Str
+         self
+      end
+   end
 end
 
-def other_fn(thing Int)
-   print_int(thing)
+class Int
+   impl ToString
+      def to_string() -> Str
+         system_cast_int_to_string(self)
+      end
+   end
+end
+
+def print(value ToString)
+   system_print(value.to_string())
+end
+
+def main
+   print(123)
 end

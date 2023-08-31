@@ -2,6 +2,7 @@ mod codegen;
 mod lexer;
 mod nilla_compiler;
 mod parser;
+mod semantic_analyzer;
 
 use nilla_compiler::NillaCompiler;
 

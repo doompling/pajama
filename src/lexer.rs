@@ -12,18 +12,25 @@ pub enum Token {
     Arrow,
     Assign,
     Binary,
+    Class,
     Comma,
+    Const(TokenPosition, String),
     Def,
+    Dot,
     End,
     Ident(TokenPosition, String),
     Illegal(TokenPosition, String),
+    Impl,
     LParen,
     NewLine(usize),
     Number(TokenPosition, u64),
     Op(char),
     RParen,
+    SelfRef,
+    Semicolon,
     Space(usize),
     StringLiteral(TokenPosition, String),
+    Trait,
     Unary,
 }
 
@@ -122,6 +129,8 @@ impl Lexer<'_> {
             '(' => Token::LParen,
             ')' => Token::RParen,
             ',' => Token::Comma,
+            '.' => Token::Dot,
+            ';' => Token::Semicolon,
 
             '"' => {
                 let mut token_pos = TokenPosition {
@@ -194,23 +203,56 @@ impl Lexer<'_> {
                 )
             },
 
-            'a'..='z' | 'A'..='Z' | '_' => {
+            'A'..='Z' => {
                 let mut token_pos = TokenPosition {
                     line: self.line_pos,
                     start_column: self.column_pos,
                     end_column: self.column_pos,
                 };
 
-                // Parse identifier
                 loop {
                     let ch = match self.chars.peek() {
                         Some(ch) => *ch,
                         None => break,
                     };
 
-                    // A word-like identifier only contains underscores and alphanumeric characters.
-                    if ch != '_' && !(ch).is_alphanumeric() {
-                        break;
+                    match ch {
+                        'a'..='z' | 'A'..='Z' => {}
+                        _ => break
+                    }
+
+                    self.chars.next();
+
+                    self.column_pos += 1;
+                    pos += 1;
+                }
+
+                let src_ident = &src[start..pos];
+
+                match src_ident {
+                    ident => {
+                        token_pos.end_column = self.column_pos;
+                        Token::Const(token_pos, ident.to_string())
+                    },
+                }
+            }
+
+            'a'..='z' | '_' => {
+                let mut token_pos = TokenPosition {
+                    line: self.line_pos,
+                    start_column: self.column_pos,
+                    end_column: self.column_pos,
+                };
+
+                loop {
+                    let ch = match self.chars.peek() {
+                        Some(ch) => *ch,
+                        None => break,
+                    };
+
+                    match ch {
+                        'a'..='z' | '_' => {}
+                        _ => break
                     }
 
                     self.chars.next();
@@ -223,8 +265,12 @@ impl Lexer<'_> {
 
                 match src_ident {
                     "binary" => Token::Binary,
+                    "class" => Token::Class,
                     "def" => Token::Def,
                     "end" => Token::End,
+                    "impl" => Token::Impl,
+                    "self" => Token::SelfRef,
+                    "trait" => Token::Trait,
                     "unary" => Token::Unary,
                     ident => {
                         token_pos.end_column = self.column_pos;

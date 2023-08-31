@@ -1,8 +1,10 @@
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
 
 use crate::codegen::Compiler;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
+use crate::semantic_analyzer::SemanticAnalyzer;
 
 pub struct NillaCompiler {}
 
@@ -12,13 +14,17 @@ impl NillaCompiler {
         let tokens = lexer.tokenize();
 
         let mut precedence_map = NillaCompiler::build_op_precedence_map();
-        let results = Parser::new(tokens, &mut precedence_map).parse();
+        let mut nodes = Parser::new(tokens, &mut precedence_map).parse().unwrap();
 
-        println!("{:#?}", results);
-        println!("\nCompiling....");
-        println!("\n###################");
+        println!("{:#?}", nodes);
 
-        Compiler::compile(results.unwrap());
+        let semantics = SemanticAnalyzer::run(&mut nodes);
+        // semantics.transform_ast();
+
+        // println!("{:#?}", semantics);
+
+        // Compiler::compile(&semantics.parser_result);
+        // Compiler::compile(nodes.unwrap());
     }
 
     fn build_op_precedence_map() -> HashMap<char, i32> {
