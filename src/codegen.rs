@@ -109,7 +109,7 @@ pub enum ReturnValue<'a> {
 /// Defines the `Expr` compiler.
 #[derive(Debug)]
 pub struct Compiler<'a, 'ctx> {
-    pub parser_result: &'a ParserResult,
+    pub parser_result: &'a ParserResult<'ctx>,
     pub context: &'ctx Context,
     pub builder: &'a Builder<'ctx>,
     pub fpm: &'a PassManager<FunctionValue<'ctx>>,

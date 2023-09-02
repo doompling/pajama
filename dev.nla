@@ -1,3 +1,7 @@
+trait ToString
+   def to_string() -> Str
+end
+
 class Str
    impl ToString
       def to_string() -> Str

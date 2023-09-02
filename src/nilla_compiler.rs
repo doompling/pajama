@@ -14,7 +14,8 @@ impl NillaCompiler {
         let tokens = lexer.tokenize();
 
         let mut precedence_map = NillaCompiler::build_op_precedence_map();
-        let mut nodes = Parser::new(tokens, &mut precedence_map).parse().unwrap();
+        let mut binding = Parser::new(tokens, &mut precedence_map);
+        let mut nodes = binding.parse().unwrap();
 
         println!("{:#?}", nodes);
 

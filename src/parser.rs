@@ -121,11 +121,19 @@ pub struct Def {
     pub main_fn: bool,
     pub prototype: Prototype,
     pub body: Vec<Node>,
+    pub class_name: String,
+    pub impl_name: String,
 }
 
 #[derive(Debug)]
-pub struct ParserResult {
+pub struct ParserResult<'a> {
     pub ast: Node,
+    pub index: ParserResultIndex<'a>,
+}
+
+#[derive(Debug)]
+pub struct ParserResultIndex<'a> {
+    pub ast: HashMap<String, Vec<&'a Node>>,
 }
 
 #[derive(Debug)]
@@ -156,7 +164,7 @@ impl<'a> Parser<'a> {
             let results = match self.current()? {
                 Token::Class => self.parse_class(),
                 Token::Trait => self.parse_trait(),
-                Token::Def => self.parse_def(),
+                Token::Def => self.parse_def("".to_string(), "".to_string()),
                 _ => Err("Expected class, def, or trait"),
             };
 
@@ -167,6 +175,7 @@ impl<'a> Parser<'a> {
 
         Ok(ParserResult {
             ast: Node::Module(Module { body }),
+            index: ParserResultIndex { ast: HashMap::new() }
         })
     }
 
@@ -176,10 +185,10 @@ impl<'a> Parser<'a> {
 
         self.advance_optional_space();
 
-        let name = match self.current()? {
+        let (pos, class_name) = match self.current()? {
             Token::Const(pos, name) => {
                 self.advance()?;
-                name
+                (pos, name)
             }
             _ => return Err("Expected identifier in prototype declaration."),
         };
@@ -197,8 +206,8 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(),
-                Token::Impl => self.parse_impl(),
+                Token::Def => self.parse_def(class_name.clone(), "".to_string()),
+                Token::Impl => self.parse_impl(class_name.clone()),
                 Token::End => {
                     self.advance();
                     break;
@@ -211,11 +220,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Return new function
-        Ok(vec![Node::Class(Class {
-            name,
-            body: functions,
-        })])
+
+        Ok(functions)
     }
 
     fn parse_trait(&mut self) -> Result<Vec<Node>, &'static str> {
@@ -245,7 +251,7 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(),
+                Token::Def => self.parse_def(name.clone(), "".to_string()),
                 Token::End => {
                     self.advance();
                     break;
@@ -258,14 +264,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Return new function
-        Ok(vec![Node::Trait(Trait {
-            name,
-            body: functions,
-        })])
+
+        Ok(functions)
     }
 
-    fn parse_impl(&mut self) -> Result<Vec<Node>, &'static str> {
+    fn parse_impl(&mut self, class_name: String) -> Result<Vec<Node>, &'static str> {
         // Advance past the keyword
         self.pos += 1;
 
@@ -292,7 +295,7 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(),
+                Token::Def => self.parse_def(class_name.clone(), name.clone()),
                 Token::End => {
                     self.advance();
                     break;
@@ -307,14 +310,10 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Return new function
-        Ok(vec![Node::Impl(Impl {
-            name,
-            body: functions,
-        })])
+        Ok(functions)
     }
 
-    fn parse_def(&mut self) -> Result<Vec<Node>, &'static str> {
+    fn parse_def(&mut self, class_name: String, impl_name: String) -> Result<Vec<Node>, &'static str> {
         // Eat 'def' keyword
         self.pos += 1;
 
@@ -330,7 +329,13 @@ impl<'a> Parser<'a> {
 
             match self.current()? {
                 Token::End => {
-                    self.advance();
+                    // A quick hack, for:
+                    // trait ToString
+                    //     def to_string() -> Str
+                    // end
+                    if body.len() > 0 {
+                        self.advance();
+                    }
                     break;
                 }
                 _ => body.push(self.parse_expr()?),
@@ -342,6 +347,8 @@ impl<'a> Parser<'a> {
             main_fn: proto.name == "main",
             prototype: proto,
             body,
+            class_name,
+            impl_name,
         })])
     }
 
@@ -625,10 +632,14 @@ impl<'a> Parser<'a> {
                             value: Box::new(self.parse_expr()?),
                         }))
                     }
-                    _ => Ok(Node::LocalVar(LocalVar {
-                        name: ident_name,
-                        return_type: Some(BaseType::Undef("".to_string())),
-                    })),
+                    _ => {
+                        // lookup nearest assignment by line number and within the same method
+
+                        Ok(Node::LocalVar(LocalVar {
+                            name: ident_name,
+                            return_type: Some(BaseType::Undef("".to_string())),
+                        }))
+                    },
                 }
             }
         }

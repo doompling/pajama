@@ -27,7 +27,6 @@ pub enum Token {
     Op(char),
     RParen,
     SelfRef,
-    Semicolon,
     Space(usize),
     StringLiteral(TokenPosition, String),
     Trait,
@@ -130,8 +129,6 @@ impl Lexer<'_> {
             ')' => Token::RParen,
             ',' => Token::Comma,
             '.' => Token::Dot,
-            ';' => Token::Semicolon,
-
             '"' => {
                 let mut token_pos = TokenPosition {
                     line: self.line_pos,
