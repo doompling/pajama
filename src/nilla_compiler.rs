@@ -17,9 +17,10 @@ impl NillaCompiler {
         let mut binding = Parser::new(tokens, &mut precedence_map);
         let mut nodes = binding.parse().unwrap();
 
+        let semantics = SemanticAnalyzer::run(&mut nodes);
+
         println!("{:#?}", nodes);
 
-        let semantics = SemanticAnalyzer::run(&mut nodes);
         // semantics.transform_ast();
 
         // println!("{:#?}", semantics);

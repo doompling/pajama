@@ -19,12 +19,14 @@ pub struct Binary {
 pub struct Call {
     pub fn_name: String,
     pub args: Vec<Node>,
+    pub return_type: Option<BaseType>,
 }
 
 #[derive(Debug)]
 pub struct Send {
     pub receiver: Box<Node>,
     pub message: Box<Node>,
+    pub return_type: Option<BaseType>,
 }
 
 #[derive(Debug)]
@@ -107,7 +109,7 @@ pub enum Node {
 //     }
 // }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum BaseType {
     Int,
     StringType,
@@ -173,7 +175,6 @@ pub struct Parser<'a> {
     pub pos: usize,
     pub op_precedence: &'a mut HashMap<char, i32>,
     pub index: ParserResultIndex<'a>,
-    pub current_body: Option<&'a Vec<Node>>,
 }
 
 impl<'a> Parser<'a> {
@@ -183,7 +184,6 @@ impl<'a> Parser<'a> {
             op_precedence,
             pos: 0,
             index: ParserResultIndex { ast: HashMap::new() },
-            current_body: None,
         }
     }
 
@@ -370,7 +370,10 @@ impl<'a> Parser<'a> {
                     // trait ToString
                     //     def to_string() -> Str
                     // end
-                    if ctx.body.len() > 0 { self.advance(); }
+                    if ctx.body.len() > 0 || class_name.is_empty() {
+                        self.advance();
+                    }
+
                     break;
                 }
                 _ => {
@@ -571,6 +574,7 @@ impl<'a> Parser<'a> {
         Ok(Node::Call(Call {
             fn_name: name,
             args: vec![self.parse_unary_expr(ctx)?],
+            return_type: None
         }))
     }
 
@@ -629,6 +633,7 @@ impl<'a> Parser<'a> {
                     return Ok(Node::Call(Call {
                         fn_name: ident_name,
                         args: vec![],
+                        return_type: None
                     }));
                 }
 
@@ -653,7 +658,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                Ok(Node::Call(Call { fn_name: ident_name, args }))
+                Ok(Node::Call(Call { fn_name: ident_name, args, return_type: None }))
             }
 
             _ => {
@@ -733,7 +738,8 @@ impl<'a> Parser<'a> {
                 match self.parse_ident_expr(ctx) {
                     Ok(node) => Ok(Node::Send(Send {
                         receiver: Box::new(receiver),
-                        message: Box::new(node)
+                        message: Box::new(node),
+                        return_type: Some(BaseType::Undef("".to_string()))
                     })),
                     Err(err) => Err(err),
                 }

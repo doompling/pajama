@@ -1,3 +1,9 @@
+def system_cast_int_to_string(int Int) -> Str
+end
+
+def system_print(string Str)
+end
+
 trait ToString
    def to_string() -> Str
 end
