@@ -43,6 +43,20 @@ pub struct LocalVar {
     pub return_type: Option<BaseType>,
 }
 
+impl LocalVar {
+    pub fn nilla_class_name(&self) -> &str {
+        match &self.return_type {
+            Some(rt) => match rt {
+                BaseType::Int => "Int",
+                BaseType::StringType => "Str",
+                BaseType::Void => "",
+                BaseType::Undef(class_name) => class_name.as_str(),
+            },
+            None => "",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Module {
     pub body: Vec<Node>,
@@ -107,6 +121,17 @@ pub struct Arg {
     pub return_type: BaseType,
 }
 
+impl Arg {
+    pub fn nilla_class_name(&self) -> &str {
+        match &self.return_type {
+            BaseType::Int => "Int",
+            BaseType::StringType => "Str",
+            BaseType::Void => "",
+            BaseType::Undef(class_name) => class_name.as_str(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Prototype {
     pub name: String,
@@ -137,10 +162,18 @@ pub struct ParserResultIndex<'a> {
 }
 
 #[derive(Debug)]
+pub struct ParserContext {
+    pub body: Vec<Node>,
+    pub prototype: Prototype
+}
+
+#[derive(Debug)]
 pub struct Parser<'a> {
     pub tokens: Vec<Token>,
     pub pos: usize,
     pub op_precedence: &'a mut HashMap<char, i32>,
+    pub index: ParserResultIndex<'a>,
+    pub current_body: Option<&'a Vec<Node>>,
 }
 
 impl<'a> Parser<'a> {
@@ -149,6 +182,8 @@ impl<'a> Parser<'a> {
             tokens,
             op_precedence,
             pos: 0,
+            index: ParserResultIndex { ast: HashMap::new() },
+            current_body: None,
         }
     }
 
@@ -314,15 +349,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_def(&mut self, class_name: String, impl_name: String) -> Result<Vec<Node>, &'static str> {
-        // Eat 'def' keyword
+        // Advance past 'def' keyword
         self.pos += 1;
 
-        // Parse signature of function
-        let proto = self.parse_prototype()?;
+        let prototype = self.parse_prototype()?;
 
         self.advance_optional_whitespace();
 
-        let mut body = vec![];
+        let mut ctx = ParserContext {
+            body: vec![],
+            prototype,
+        };
 
         loop {
             self.advance_optional_whitespace();
@@ -333,20 +370,20 @@ impl<'a> Parser<'a> {
                     // trait ToString
                     //     def to_string() -> Str
                     // end
-                    if body.len() > 0 {
-                        self.advance();
-                    }
+                    if ctx.body.len() > 0 { self.advance(); }
                     break;
                 }
-                _ => body.push(self.parse_expr()?),
+                _ => {
+                    let expr = self.parse_expr(&ctx)?;
+                    ctx.body.push(expr)
+                },
             }
         }
 
-        // Return new function
         Ok(vec![Node::Def(Def {
-            main_fn: proto.name == "main",
-            prototype: proto,
-            body,
+            main_fn: ctx.prototype.name == "main",
+            prototype: ctx.prototype,
+            body: ctx.body,
             class_name,
             impl_name,
         })])
@@ -507,24 +544,24 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expr(&mut self) -> Result<Node, &'static str> {
-        match self.parse_unary_expr() {
+    fn parse_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+        match self.parse_unary_expr(ctx) {
             Ok(left) => {
                 self.advance_optional_whitespace();
-                self.parse_binary_expr(0, left)
+                self.parse_binary_expr(ctx, 0, left)
             }
             err => err,
         }
     }
 
     /// Parses an unary expression.
-    fn parse_unary_expr(&mut self) -> Result<Node, &'static str> {
+    fn parse_unary_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
         let op = match self.current()? {
             Token::Op(ch) => {
                 self.advance()?;
                 ch
             }
-            _ => return self.parse_primary(),
+            _ => return self.parse_primary(ctx),
         };
 
         let mut name = String::from("unary");
@@ -533,16 +570,16 @@ impl<'a> Parser<'a> {
 
         Ok(Node::Call(Call {
             fn_name: name,
-            args: vec![self.parse_unary_expr()?],
+            args: vec![self.parse_unary_expr(ctx)?],
         }))
     }
 
-    fn parse_primary(&mut self) -> Result<Node, &'static str> {
+    fn parse_primary(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
         let node = match self.curr() {
-            Token::Ident(_, _) => self.parse_ident_expr(),
+            Token::Ident(_, _) => self.parse_ident_expr(ctx),
             Token::Number(_, _) => self.parse_nb_expr(),
             Token::StringLiteral(_, _) => self.parse_string_expr(),
-            Token::LParen => self.parse_paren_expr(),
+            Token::LParen => self.parse_paren_expr(ctx),
             Token::SelfRef => self.parse_self_ref_expr(),
             _ => {
                 panic!("{:#?}", self.curr());
@@ -554,7 +591,7 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
 
         match self.curr() {
-            Token::Dot => self.parse_send_expr(node),
+            Token::Dot => self.parse_send_expr(ctx, node),
             _ => node
         }
     }
@@ -570,7 +607,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an expression that starts with an identifier (either a variable or a function call).
-    fn parse_ident_expr(&mut self) -> Result<Node, &'static str> {
+    fn parse_ident_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
         let ident_name = match self.curr() {
             Token::Ident(pos, id) => {
                 self.advance();
@@ -600,7 +637,7 @@ impl<'a> Parser<'a> {
                 loop {
                     self.advance_optional_whitespace();
 
-                    args.push(self.parse_expr()?);
+                    args.push(self.parse_expr(ctx)?);
 
                     self.advance_optional_whitespace();
 
@@ -629,23 +666,61 @@ impl<'a> Parser<'a> {
 
                         Ok(Node::AssignLocalVar(AssignLocalVar {
                             name: ident_name,
-                            value: Box::new(self.parse_expr()?),
+                            value: Box::new(self.parse_expr(ctx)?),
                         }))
                     }
                     _ => {
-                        // lookup nearest assignment by line number and within the same method
+                        // After all that, it's just a lvar. Fetch the type from the nearest assignment.
 
-                        Ok(Node::LocalVar(LocalVar {
-                            name: ident_name,
-                            return_type: Some(BaseType::Undef("".to_string())),
-                        }))
+                        let closest_assignment = ctx.body.iter().rev().find(|node| {
+                            match node {
+                                Node::AssignLocalVar(asgnLvar) => {
+                                    asgnLvar.name == ident_name
+                                },
+                                _ => false
+                            }
+                        });
+
+                        match closest_assignment {
+                            Some(asgnLvar) => {
+                                match asgnLvar {
+                                    Node::AssignLocalVar(asgnLvar) => {
+                                        let return_type_name = match asgnLvar.value.as_ref() {
+                                            Node::Int(_) => "Int",
+                                            Node::InterpolableString(_) => "Str",
+                                            Node::LocalVar(val) => val.nilla_class_name(),
+                                            _ => return Err("Local variable assignment was given an unsupprted node")
+                                        };
+
+                                        Ok(Node::LocalVar(LocalVar {
+                                            name: ident_name,
+                                            return_type: Some(BaseType::Undef(return_type_name.to_string())),
+                                        }))
+                                    },
+                                    _ => Err("Node other than AssignLocalVar in closest_assignment")
+                                }
+                            },
+                            None => {
+                                let arg_assignment = ctx.prototype.args.iter().find(|node| { node.name == ident_name });
+
+                                match arg_assignment {
+                                    Some(arg) => {
+                                        Ok(Node::LocalVar(LocalVar {
+                                            name: ident_name,
+                                            return_type: Some(BaseType::Undef(arg.nilla_class_name().to_string())),
+                                        }))
+                                    }
+                                    None => Err("Local variable isn't assigned anywhere"),
+                                }
+                            },
+                        }
                     },
                 }
             }
         }
     }
 
-    fn parse_send_expr(&mut self, receiver: Result<Node, &'static str>) -> Result<Node, &'static str> {
+    fn parse_send_expr(&mut self, ctx: &ParserContext, receiver: Result<Node, &'static str>) -> Result<Node, &'static str> {
         let receiver = match receiver {
             Ok(node) => node,
             Err(err) => return Err(err),
@@ -655,7 +730,7 @@ impl<'a> Parser<'a> {
 
         let send_node = match self.curr() {
             Token::Ident(pos, name) => {
-                match self.parse_ident_expr() {
+                match self.parse_ident_expr(ctx) {
                     Ok(node) => Ok(Node::Send(Send {
                         receiver: Box::new(receiver),
                         message: Box::new(node)
@@ -669,7 +744,7 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
 
         match self.curr() {
-            Token::Dot => self.parse_send_expr(send_node),
+            Token::Dot => self.parse_send_expr(ctx, send_node),
             _ => send_node,
         }
     }
@@ -699,7 +774,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an expression enclosed in parenthesis.
-    fn parse_paren_expr(&mut self) -> Result<Node, &'static str> {
+    fn parse_paren_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
         match self.current()? {
             Token::LParen => (),
             _ => return Err("Expected '(' character at start of parenthesized expression."),
@@ -708,7 +783,7 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
         self.advance()?;
 
-        let expr = self.parse_expr()?;
+        let expr = self.parse_expr(ctx)?;
 
         self.advance_optional_whitespace();
 
@@ -721,7 +796,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a binary expression, given its left-hand expression.
-    fn parse_binary_expr(&mut self, prec: i32, mut left: Node) -> Result<Node, &'static str> {
+    fn parse_binary_expr(&mut self, ctx: &ParserContext, prec: i32, mut left: Node) -> Result<Node, &'static str> {
         loop {
             if let Ok(Token::End) = self.current() {
                 // self.advance()?;
@@ -742,13 +817,13 @@ impl<'a> Parser<'a> {
             self.advance()?;
             self.advance_optional_whitespace();
 
-            let mut right = self.parse_unary_expr()?;
+            let mut right = self.parse_unary_expr(ctx)?;
             let next_prec = self.get_tok_precedence();
 
             self.advance_optional_whitespace();
 
             if curr_prec < next_prec {
-                right = self.parse_binary_expr(curr_prec + 1, right)?;
+                right = self.parse_binary_expr(ctx, curr_prec + 1, right)?;
             }
 
             left = Node::Binary(Binary {
