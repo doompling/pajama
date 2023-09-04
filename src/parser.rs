@@ -83,7 +83,9 @@ pub struct Impl {
 }
 
 #[derive(Debug)]
-pub struct SelfRef {}
+pub struct SelfRef {
+    pub return_type: BaseType,
+}
 
 #[derive(Debug)]
 pub enum Node {
@@ -165,6 +167,7 @@ pub struct ParserResultIndex<'a> {
 
 #[derive(Debug)]
 pub struct ParserContext {
+    pub class_name: String,
     pub body: Vec<Node>,
     pub prototype: Prototype
 }
@@ -357,6 +360,7 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
 
         let mut ctx = ParserContext {
+            class_name,
             body: vec![],
             prototype,
         };
@@ -370,7 +374,7 @@ impl<'a> Parser<'a> {
                     // trait ToString
                     //     def to_string() -> Str
                     // end
-                    if ctx.body.len() > 0 || class_name.is_empty() {
+                    if ctx.body.len() > 0 || ctx.class_name.is_empty() {
                         self.advance();
                     }
 
@@ -387,7 +391,7 @@ impl<'a> Parser<'a> {
             main_fn: ctx.prototype.name == "main",
             prototype: ctx.prototype,
             body: ctx.body,
-            class_name,
+            class_name: ctx.class_name,
             impl_name,
         })])
     }
@@ -584,7 +588,7 @@ impl<'a> Parser<'a> {
             Token::Number(_, _) => self.parse_nb_expr(),
             Token::StringLiteral(_, _) => self.parse_string_expr(),
             Token::LParen => self.parse_paren_expr(ctx),
-            Token::SelfRef => self.parse_self_ref_expr(),
+            Token::SelfRef => self.parse_self_ref_expr(ctx),
             _ => {
                 panic!("{:#?}", self.curr());
                 panic!("{:#?}", self);
@@ -600,11 +604,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_self_ref_expr(&mut self) -> Result<Node, &'static str> {
+    fn parse_self_ref_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
         match self.curr() {
             Token::SelfRef => {
                 self.advance();
-                Ok(Node::SelfRef(SelfRef {}))
+
+                Ok(Node::SelfRef(SelfRef {
+                    return_type: BaseType::Undef(ctx.class_name.clone())
+                }))
             }
             _ => Err("Expected SelfRef"),
         }
