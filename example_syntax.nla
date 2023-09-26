@@ -1,0 +1,62 @@
+def main()
+   val1 = "prefix"
+   val2 = "some string"
+   new_val = join(val1, val2, ":")
+
+   base_print(string)
+end
+
+def join(arg1, arg2, sep) -> String
+   [arg1, arg2].join(sep)
+end
+
+
+
+
+def print(string)
+   base_print(string)
+end
+
+class User
+   name: String
+   count: Number
+
+   def new() -> User
+      return User(
+         name: "Joel"
+         count: 1
+      )
+   end
+
+   imp Iterator
+      def next() -> Number
+         return @count += 1
+      end
+   end
+
+ private
+
+   def secret_tech()
+      hash = HashMap.new
+      channel = Channel.new(hash: hash)
+
+      channel.received { |attrs, key, value|
+         attrs.hash.insert(key, value)
+      }
+
+      thread_group = ThreadGroup.new
+
+      1..=3.iter() { |i|
+         thread_group.add(
+               Thread.native(channel) { |channel|
+                  sleep(1)
+                  channel.send("key", "value")
+               }
+         )
+      }
+
+      thread_group.wait()
+
+      hash = channel.hash
+   end
+end

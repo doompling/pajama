@@ -1,33 +1,17 @@
-def system_cast_int_to_string(int Int) -> Str
-end
-
-def system_print(string Str)
-end
-
-trait ToString
-   def to_string() -> Str
+def base_print(string Str)
 end
 
 class Str
-   impl ToString
-      def to_string() -> Str
-         self
-      end
+   def test_fn() -> Str
+      what = "blaaaa"
+      what
    end
 end
 
-class Int
-   impl ToString
-      def to_string() -> Str
-         system_cast_int_to_string(self)
-      end
-   end
-end
-
-def print(value ToString)
-   system_print(value.to_string())
+def print(value Str)
+   base_print(value.test_fn())
 end
 
 def main
-   print(123)
+   print("Can anyone hear me?")
 end

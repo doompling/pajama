@@ -1,5 +1,6 @@
-use std::borrow::BorrowMut;
+use std::borrow::{BorrowMut, Borrow};
 use std::collections::HashMap;
+use std::ops::Deref;
 
 use crate::codegen::Compiler;
 use crate::lexer::Lexer;
@@ -15,15 +16,14 @@ impl NillaCompiler {
 
         let mut precedence_map = NillaCompiler::build_op_precedence_map();
         let mut binding = Parser::new(tokens, &mut precedence_map);
+
         let mut nodes = binding.parse().unwrap();
 
         let semantics = SemanticAnalyzer::run(&mut nodes);
 
         println!("{:#?}", nodes);
 
-        // semantics.transform_ast();
-
-        // println!("{:#?}", semantics);
+        Compiler::compile(&nodes, &binding);
 
         // Compiler::compile(&semantics.parser_result);
         // Compiler::compile(nodes.unwrap());

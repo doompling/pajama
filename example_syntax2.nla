@@ -1,0 +1,11 @@
+class Vec
+  pointer: Ptr
+  length: Int32
+  capacity: Int32
+end
+
+
+
+extern print(String);
+
+print("can anyone hear me?");

@@ -67,7 +67,7 @@ pub struct Module {
 #[derive(Debug)]
 pub struct Class {
     pub name: String,
-    pub body: Vec<Node>,
+    // pub attributes: Vec<Node>,
 }
 
 #[derive(Debug)]
@@ -152,17 +152,19 @@ pub struct Def {
     pub body: Vec<Node>,
     pub class_name: String,
     pub impl_name: String,
+    pub trait_name: String,
 }
 
 #[derive(Debug)]
-pub struct ParserResult<'a> {
+pub struct ParserResult {
     pub ast: Node,
-    pub index: ParserResultIndex<'a>,
+    pub index: ParserResultIndex,
 }
 
 #[derive(Debug)]
-pub struct ParserResultIndex<'a> {
-    pub ast: HashMap<String, Vec<&'a Node>>,
+pub struct ParserResultIndex {
+    pub trait_index: HashMap<String, Vec<Class>>,
+    pub fn_index: HashMap<String, Vec<BaseType>>,
 }
 
 #[derive(Debug)]
@@ -177,7 +179,7 @@ pub struct Parser<'a> {
     pub tokens: Vec<Token>,
     pub pos: usize,
     pub op_precedence: &'a mut HashMap<char, i32>,
-    pub index: ParserResultIndex<'a>,
+    pub index: ParserResultIndex,
 }
 
 impl<'a> Parser<'a> {
@@ -186,10 +188,12 @@ impl<'a> Parser<'a> {
             tokens,
             op_precedence,
             pos: 0,
-            index: ParserResultIndex { ast: HashMap::new() },
+            index: ParserResultIndex {
+                trait_index: HashMap::new(),
+                fn_index: HashMap::new(),
+            },
         }
     }
-
     pub fn parse(&mut self) -> Result<ParserResult, &'static str> {
         let mut body = vec![];
 
@@ -202,8 +206,10 @@ impl<'a> Parser<'a> {
             let results = match self.current()? {
                 Token::Class => self.parse_class(),
                 Token::Trait => self.parse_trait(),
-                Token::Def => self.parse_def("".to_string(), "".to_string()),
-                _ => Err("Expected class, def, or trait"),
+                Token::Def => self.parse_def("".to_string(), "".to_string(), "".to_string()),
+                _ => {
+                    println!("{:#?}", self.curr());
+                    Err("Expected class, def, or trait")},
             };
 
             for result in results? {
@@ -213,7 +219,11 @@ impl<'a> Parser<'a> {
 
         Ok(ParserResult {
             ast: Node::Module(Module { body }),
-            index: ParserResultIndex { ast: HashMap::new() }
+            index: ParserResultIndex {
+                // trait_index: self.index.trait_index
+                trait_index: HashMap::new(),
+                fn_index: HashMap::new(),
+            }
         })
     }
 
@@ -240,11 +250,15 @@ impl<'a> Parser<'a> {
 
         let mut functions = vec![];
 
+        functions.push(Node::Class(Class {
+            name: class_name.clone(),
+        }));
+
         loop {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(class_name.clone(), "".to_string()),
+                Token::Def => self.parse_def(class_name.clone(), "".to_string(), "".to_string()),
                 Token::Impl => self.parse_impl(class_name.clone()),
                 Token::End => {
                     self.advance();
@@ -289,12 +303,14 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(name.clone(), "".to_string()),
+                Token::Def => self.parse_def("".to_string(), "".to_string(), name.clone()),
                 Token::End => {
                     self.advance();
                     break;
                 }
-                _ => return Err("Expected only def within a trait"),
+                _ => {
+                    println!("{:#?}", self.curr());
+                    return Err("Expected only def within a trait")},
             };
 
             for result in results? {
@@ -312,7 +328,7 @@ impl<'a> Parser<'a> {
 
         self.advance_optional_space();
 
-        let name = match self.current()? {
+        let impl_name = match self.current()? {
             Token::Const(pos, name) => {
                 self.advance()?;
                 name
@@ -327,13 +343,28 @@ impl<'a> Parser<'a> {
             _ => return Err("Expected a new line after impl name"),
         };
 
+        println!("{:#?}", 1);
+
+        if let Some(nodes) = self.index.trait_index.get_mut(&impl_name) {
+            println!("{:#?}", 2);
+            nodes.push(Class { name: class_name.clone() });
+        } else {
+            println!("{:#?}", 3);
+
+            self.index.trait_index.insert(
+                impl_name.clone(),vec![(Class { name: class_name.clone() })]
+            );
+
+            println!("{:#?}", self);
+        };
+
         let mut functions = vec![];
 
         loop {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(class_name.clone(), name.clone()),
+                Token::Def => self.parse_def(class_name.clone(), impl_name.clone(), "".to_string()),
                 Token::End => {
                     self.advance();
                     break;
@@ -351,7 +382,7 @@ impl<'a> Parser<'a> {
         Ok(functions)
     }
 
-    fn parse_def(&mut self, class_name: String, impl_name: String) -> Result<Vec<Node>, &'static str> {
+    fn parse_def(&mut self, class_name: String, impl_name: String, trait_name: String) -> Result<Vec<Node>, &'static str> {
         // Advance past 'def' keyword
         self.pos += 1;
 
@@ -370,14 +401,11 @@ impl<'a> Parser<'a> {
 
             match self.current()? {
                 Token::End => {
-                    // A quick hack, for:
-                    // trait ToString
-                    //     def to_string() -> Str
-                    // end
-                    if ctx.body.len() > 0 || ctx.class_name.is_empty() {
-                        self.advance();
+                    if !trait_name.is_empty() && ctx.body.len() == 0 {
+                        break;
                     }
 
+                    self.advance();
                     break;
                 }
                 _ => {
@@ -387,13 +415,42 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(vec![Node::Def(Def {
+        let def_node = Def {
             main_fn: ctx.prototype.name == "main",
             prototype: ctx.prototype,
             body: ctx.body,
             class_name: ctx.class_name,
             impl_name,
-        })])
+            trait_name,
+        };
+
+        let mut arg_return_types = vec![];
+
+        let fn_name = if !def_node.class_name.is_empty() {
+            if !def_node.impl_name.is_empty() {
+                arg_return_types.push(BaseType::Undef(def_node.impl_name.clone()));
+                format!("{}:{}:{}", &def_node.class_name, &def_node.impl_name, &def_node.prototype.name)
+            } else {
+                if def_node.class_name == "Str" {
+                    arg_return_types.push(BaseType::StringType)
+                } else {
+                    arg_return_types.push(BaseType::Undef(def_node.impl_name.clone()));
+                }
+                format!("{}:{}", &def_node.class_name, &def_node.prototype.name)
+            }
+        } else if !def_node.trait_name.is_empty() {
+            arg_return_types.push(BaseType::Undef(def_node.trait_name.clone()));
+            format!("{}:{}", &def_node.trait_name, &def_node.prototype.name)
+        } else {
+            def_node.prototype.name.clone()
+        };
+
+        for arg in &def_node.prototype.args {
+            arg_return_types.push(arg.return_type.clone());
+        }
+        self.index.fn_index.insert(fn_name, arg_return_types);
+
+        Ok(vec![Node::Def(def_node)])
     }
 
     /// Parses the prototype of a function, whether external or user-defined.
@@ -431,7 +488,9 @@ impl<'a> Parser<'a> {
                     prec: precedence,
                 });
             }
-            _ => return Err("Expected '(' character in prototype declaration. 2"),
+            _ => {
+                println!("{:#?}", self.curr());
+                return Err("Expected '(' character in prototype declaration. 2")},
         }
 
         self.advance_optional_whitespace();

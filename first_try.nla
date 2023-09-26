@@ -1,0 +1,23 @@
+extern putchard(String);
+
+#def printstar(n)
+#  putchard(42);
+
+#printstar(42);
+
+putchard(42);
+
+def main()
+  putchard(42)
+  putchard(42)
+  putchard(42)
+end
+
+
+
+def printstar(n)
+  for i = 1, i < n, 1.0 in
+    putchard(42);
+
+printstar(100);
+
