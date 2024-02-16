@@ -5,14 +5,18 @@ use std::collections::{HashMap, BTreeMap};
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::passes::PassManager;
-use inkwell::targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::types::{AnyTypeEnum, BasicType, IntType, StructType, VoidType, BasicTypeEnum};
 use inkwell::values::{
     AsValueRef, BasicMetadataValueEnum, BasicValue, FloatValue, FunctionValue, IntValue,
-    PointerValue, StructValue,
+    PointerValue, StructValue, BasicValueEnum, ArrayValue
 };
 use inkwell::{AddressSpace, OptimizationLevel};
+use inkwell::{
+    passes::PassBuilderOptions,
+    targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine},
+};
+
+// use inkwell_internals::llvm_versions;
 
 use crate::parser::{self, *};
 
@@ -158,7 +162,6 @@ pub struct Compiler<'a, 'ctx> {
     pub parser_result: &'a ParserResult,
     pub context: &'ctx Context,
     pub builder: &'a Builder<'ctx>,
-    pub fpm: &'a PassManager<FunctionValue<'ctx>>,
     pub llvm_module: &'a Module<'ctx>,
     pub llvm_types: &'a NillaLLVMTypes<'ctx>,
 
@@ -185,23 +188,34 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 &target_triple,
                 TargetMachine::get_host_cpu_name().to_string().as_str(),
                 TargetMachine::get_host_cpu_features().to_string().as_str(),
-                OptimizationLevel::Default,
-                RelocMode::Default,
+                // OptimizationLevel::Default,
+                OptimizationLevel::None,
+                // RelocMode::Default,
+                RelocMode::PIC,
                 CodeModel::Default,
             )
             .unwrap();
+
+        let passes: &[&str] = &[
+            "instcombine",
+            "reassociate",
+            "gvn",
+            "simplifycfg",
+            // "basic-aa",
+            "mem2reg",
+        ];
 
         let context = Context::create();
         let module = context.create_module("nilla");
         let builder = context.create_builder();
 
-        let data_layout = &target_machine.get_target_data().get_data_layout();
+        // let data_layout = &target_machine.get_target_data().get_data_layout();
 
-        module.set_data_layout(data_layout);
-        module.set_triple(&target_triple);
+        // module.set_data_layout(data_layout);
+        // module.set_triple(&target_triple);
 
         // Create FPM
-        let fpm = PassManager::create(&module);
+        // let fpm = PassManager::create(&module);
 
         // fpm.add_instruction_combining_pass();
         // fpm.add_reassociate_pass();
@@ -212,7 +226,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         // fpm.add_instruction_combining_pass();
         // fpm.add_reassociate_pass();
 
-        fpm.initialize();
+        // fpm.initialize();
 
         // // Add print fn
         // let print_args = &[struct_ptr_type.into()];
@@ -275,7 +289,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             parser_result: &parser_result,
             context: &context,
             builder: &builder,
-            fpm: &fpm,
             llvm_module: &module,
             fn_value_opt: None,
             local_variables: HashMap::new(),
@@ -288,6 +301,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         println!("\n{}", module.print_to_string().to_string());
         println!("###################");
+
+        module
+            .run_passes(passes.join(",").as_str(), &target_machine, PassBuilderOptions::create())
+            .unwrap();
 
         let ee = module
             .create_jit_execution_engine(OptimizationLevel::None)
@@ -426,11 +443,12 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
                 let i32_val = match self_param {
                     inkwell::values::BasicValueEnum::PointerValue(value) => {
-                        let i32_ptr = self.builder.build_struct_gep(value, 0, "i32_ptr");
-                        self.builder.build_load(i32_ptr.unwrap(), "i32_val").into_int_value()
+                        let i32_ptr = self.builder.build_struct_gep(value.get_type(), value, 0, "i32_ptr");
+                        // self.builder.build_load(self.llvm_types.int_type.into(), i32_ptr.unwrap(), "i32_val").into_int_value()
+                        self.builder.build_load(value.get_type(), i32_ptr.unwrap(), "i32_val")
                     }
                     inkwell::values::BasicValueEnum::IntValue(value) => {
-                        self.context.i32_type().const_int(0, false)
+                        Ok(self.context.i32_type().const_int(0, false).as_basic_value_enum())
                     }
                     _ => todo!(),
 
@@ -467,7 +485,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
                             // todo: pass other args
 
-                            self.builder.build_call(class_fn, &[bitcasted_arg0.into()], "result")
+                            self.builder.build_call(class_fn, &[bitcasted_arg0.unwrap().into()], "result")
                             // self.builder.build_call(class_fn, &arg_return_types, "result")
                         }
                         // inkwell::values::BasicValueEnum::IntValue(value) => {
@@ -479,13 +497,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     match &node.prototype.return_type {
                         Some(rt) => match rt {
                             BaseType::Int => {
-                                match result.try_as_basic_value().left() {
+                                match result.unwrap().try_as_basic_value().left() {
                                     Some(value) => self.builder.build_return(Some(&value)),
                                     None => todo!(),
                                 };
                             }
                             BaseType::StringType => {
-                                match result.try_as_basic_value().left() {
+                                match result.unwrap().try_as_basic_value().left() {
                                     Some(value) => self.builder.build_return(Some(&value)),
                                     None => todo!(),
                                 };
@@ -510,7 +528,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
                 let default_block = self.context.append_basic_block(function, "default");
                 let switch_inst = self.builder.build_switch(
-                    i32_val,
+                    i32_val.unwrap().into_int_value(),
                     default_block,
                     &cases.into_boxed_slice()
                 );
@@ -679,12 +697,14 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                             //     self.builder.build_return(Some(&value))
                             // }
                             ReturnValue::ArrayPtrValue(value) => {
-                                let loaded_value = self.builder.build_load(value, "loaded_value");
-                                self.builder.build_return(Some(&loaded_value))
+                                // let loaded_value = self.builder.build_load(self.llvm_types.array_ptr_type.clone(), value, "loaded_value");
+                                // let loaded_value = self.builder.build_load(self.llvm_types.array_ptr_type.clone(), value, "loaded_value");
+                                let loaded_value = self.builder.build_load(value.get_type(), value, "loaded_value");
+                                self.builder.build_return(Some(&loaded_value.unwrap()))
                             }
                             ReturnValue::StructPtrValue(value) => {
-                                let loaded_value = self.builder.build_load(value, "loaded_value");
-                                self.builder.build_return(Some(&loaded_value))
+                                let loaded_value = self.builder.build_load(value.get_type(), value, "loaded_value");
+                                self.builder.build_return(Some(&loaded_value.unwrap()))
                             }
                             ReturnValue::IntValue(_) => todo!(),
                             ReturnValue::StructValue(value) => {
@@ -707,10 +727,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             }
         }
 
-        // return the whole thing after verification and optimization
         if function.verify(true) {
-            self.fpm.run_on(&function);
-
             Ok(function)
         } else {
             println!("---------------");
@@ -858,8 +875,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         }
 
         match *return_type {
-            LLVMType::StructType(llvm_type) => builder.build_alloca(llvm_type, arg_name.as_str()),
-            LLVMType::IntType(llvm_type) => builder.build_alloca(llvm_type, arg_name.as_str()),
+            LLVMType::StructType(llvm_type) => builder.build_alloca(llvm_type, arg_name.as_str()).unwrap(),
+            LLVMType::IntType(llvm_type) => builder.build_alloca(llvm_type, arg_name.as_str()).unwrap(),
             LLVMType::VoidType(_llvm_type) => {
                 panic!("void shouldnt be assigned")
             }
@@ -888,7 +905,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     ReturnValue::ArrayPtrValue(pv) => {
                         let ret_type = self.llvm_types.array_ptr_type.clone();
                         let alloca = self.create_entry_block_alloca(lvar_name, &ret_type);
-                        let loaded_val = self.builder.build_load(*pv, lvar_name);
+                        let loaded_val = self.builder.build_load(pv.get_type(), *pv, lvar_name).unwrap();
 
                         self.builder.build_store(alloca, loaded_val);
 
@@ -996,20 +1013,19 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
                 let element_pointer = unsafe {
                     self.builder
-                        .build_gep(global_str.as_pointer_value(), &indices, "element_ptr")
-                };
+                        .build_gep(i8_array_type, global_str.as_pointer_value(), &indices, "element_ptr")
+                }.unwrap();
 
                 let args = &[
                     element_pointer.into(),
                     i32_type
                         .const_int(string.value.len() as u64, false)
-                        .as_basic_value_enum()
                         .into(),
                 ];
 
                 let nilla_str_ptr = self
                     .builder
-                    .build_call(malloc_string_fn, args, "tmp")
+                    .build_call(malloc_string_fn, args, "tmp").unwrap()
                     .try_as_basic_value()
                     .left()
                     .unwrap();
@@ -1131,7 +1147,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                                 i += 1;
 
                                 // let struct_type = self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default());
-                                self.builder.build_bitcast(string_ptr, struct_type, "bitcasted_val").into()
+                                self.builder.build_bitcast(string_ptr, struct_type, "bitcasted_val").unwrap().into()
 
                                 // todo: pass other args
 
@@ -1154,7 +1170,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                                 i += 1;
 
                                 // let struct_type = self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default());
-                                self.builder.build_bitcast(struct_ptr, struct_type, "bitcasted_val").into()
+                                self.builder.build_bitcast(struct_ptr.as_basic_value_enum(), struct_type, "bitcasted_val").unwrap().into()
 
                                 // todo: pass other args
 
@@ -1177,6 +1193,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     match self
                         .builder
                         .build_call(fun, argsv.as_slice(), "tmp")
+                        .unwrap()
                         .try_as_basic_value()
                         .left()
                     {
@@ -1287,6 +1304,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                         match self
                             .builder
                             .build_call(fun, argsv.as_slice(), "tmp")
+                            .unwrap()
                             .try_as_basic_value()
                             .left()
                         {
