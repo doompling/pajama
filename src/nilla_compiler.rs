@@ -2,7 +2,8 @@ use std::borrow::{BorrowMut, Borrow};
 use std::collections::HashMap;
 use std::ops::Deref;
 
-use crate::codegen::Compiler;
+// use crate::codegen::Compiler;
+use crate::mlir_codegen::Compiler;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::semantic_analyzer::SemanticAnalyzer;

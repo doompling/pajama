@@ -1,4 +1,5 @@
 mod codegen;
+mod mlir_codegen;
 mod lexer;
 mod nilla_compiler;
 mod parser;
