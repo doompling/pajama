@@ -42,6 +42,12 @@ fn populate_method_index(module: &mut crate::parser::Module, method_index: &mut 
                     def_node.prototype.return_type.clone()
                 );
             }
+            Node::DefE(def_e_node) => {
+                method_index.insert(
+                    def_e_node.prototype.name.clone(),
+                    def_e_node.prototype.return_type.clone()
+                );
+            }
             _ => {}
         }
     });

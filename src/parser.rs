@@ -95,6 +95,7 @@ pub enum Node {
     Call(Call),
     Send(Send),
     Def(Def),
+    DefE(DefE),
     Int(Int),
     InterpolableString(InterpolableString),
     Module(Module),
@@ -156,6 +157,11 @@ pub struct Def {
 }
 
 #[derive(Debug)]
+pub struct DefE {
+    pub prototype: Prototype,
+}
+
+#[derive(Debug)]
 pub struct ParserResult {
     pub ast: Node,
     pub index: ParserResultIndex,
@@ -207,6 +213,7 @@ impl<'a> Parser<'a> {
                 Token::Class => self.parse_class(),
                 Token::Trait => self.parse_trait(),
                 Token::Def => self.parse_def("".to_string(), "".to_string(), "".to_string()),
+                Token::DefE => self.parse_def_e(),
                 _ => {
                     println!("{:#?}", self.curr());
                     Err("Expected class, def, or trait")},
@@ -451,6 +458,28 @@ impl<'a> Parser<'a> {
         self.index.fn_index.insert(fn_name, arg_return_types);
 
         Ok(vec![Node::Def(def_node)])
+    }
+
+    fn parse_def_e(&mut self) -> Result<Vec<Node>, &'static str> {
+        // Advance past 'def' keyword
+        self.pos += 1;
+
+        let prototype = self.parse_prototype()?;
+
+        self.advance_optional_whitespace();
+
+        let def_e_node = DefE { prototype };
+
+        let mut arg_return_types = vec![];
+
+        let fn_name = def_e_node.prototype.name.clone();
+
+        for arg in &def_e_node.prototype.args {
+            arg_return_types.push(arg.return_type.clone());
+        }
+        self.index.fn_index.insert(fn_name, arg_return_types);
+
+        Ok(vec![Node::DefE(def_e_node)])
     }
 
     /// Parses the prototype of a function, whether external or user-defined.

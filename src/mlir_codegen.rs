@@ -84,6 +84,7 @@ impl NillaString {
 //         }
 //     }
 // }
+
 #[no_mangle]
 pub fn sys_print(string: NillaString) {
     println!("{:#?}", string);
@@ -118,6 +119,15 @@ static EXTERNAL_FNS1: [fn(NillaString); 1] = [sys_print];
 static EXTERNAL_FNS2: [fn(bytes: *const u8, initial_length: i32) -> *mut NillaString; 1] =
     [NillaString::sys_allocate_string];
 
+
+#[no_mangle]
+pub fn int_print(int: i32) {
+    println!("int_print: {:#?}", int);
+}
+
+#[used]
+static EXTERNAL_FNS3: [fn(i32); 1] = [int_print];
+
 // #[derive(Debug)]
 // pub enum ReturnValue<'a> {
 //     IntValue(IntValue<'a>),
@@ -141,6 +151,7 @@ static EXTERNAL_FNS2: [fn(bytes: *const u8, initial_length: i32) -> *mut NillaSt
 pub struct Compiler<'a, 'ctx> {
     pub parser_result: &'a ParserResult,
     pub context: &'ctx Context,
+    pub mlir_module: &'a Module<'ctx>,
     // pub builder: &'a Builder<'ctx>,
     // pub llvm_module: &'a Module<'ctx>,
     // pub llvm_types: &'a NillaLLVMTypes<'ctx>,
@@ -158,10 +169,14 @@ pub struct Compiler<'a, 'ctx> {
 // }
 
 use melior::dialect::index;
+use melior::ir::attribute::{IntegerAttribute, FlatSymbolRefAttribute};
+use melior::ir::operation::OperationResult;
+use melior::ir::r#type::IntegerType;
+use melior::pass::PassManager;
 use melior::{ExecutionEngine, pass};
 use melior::{
     Context,
-    dialect::{arith, DialectRegistry, func},
+    dialect::{arith, DialectRegistry, func, func::call, llvm::r#type},
     ir::{*, attribute::{StringAttribute, TypeAttribute}, r#type::FunctionType},
     utility::register_all_dialects,
     utility::register_all_llvm_translations,
@@ -175,75 +190,97 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let context = Context::new();
         context.append_dialect_registry(&registry);
         context.load_all_available_dialects();
-
         register_all_llvm_translations(&context);
 
+        // let registry = DialectRegistry::new();
+        // let context = Context::new();
+
+        // register_all_dialects(&registry);
+        // register_all_llvm_translations(&context);
+
+        // context.load_all_available_dialects();
+        // context.append_dialect_registry(&registry);
+
+        // temp for development
+        context.attach_diagnostic_handler(|diagnostic| {
+            eprintln!("{}", diagnostic);
+            true
+        });
+
+
         let location = Location::unknown(&context);
-        let mut module = Module::new(location);
+        let mut mlir_module = Module::new(location);
 
-        let index_type = Type::index(&context);
+        let mut compiler = Compiler {
+            parser_result: &parser_result,
+            context: &context,
+            mlir_module: &mlir_module,
+            // builder: &builder,
+            // llvm_module: &module,
+            // fn_value_opt: None,
+            // local_variables: HashMap::new(),
+            // llvm_types: &llvm_types,
+            class_ids: BTreeMap::new(),
+            parser_index: &parser.index,
+        };
 
-        module.body().append_operation(func::func(
-            &context,
-            StringAttribute::new(&context, "add"),
-            // TypeAttribute::new(FunctionType::new(&context, &[index_type, index_type], &[index_type]).into()),
-            TypeAttribute::new(FunctionType::new(&context, &[index_type, index_type], &[index_type]).into()),
-            {
-                let block = Block::new(&[(index_type, location), (index_type, location)]);
-                // let block = Block::new(&[(index_type, location)]);
+        compiler.compile_ast();
 
-                let sum = block.append_operation(arith::addi(
-                    block.argument(0).unwrap().into(),
-                    block.argument(1).unwrap().into(),
-                    location
-                ));
 
-                block.append_operation(func::r#return( &[sum.result(0).unwrap().into()], location));
-                // block.append_operation(func::r#return( &[block.argument(0).unwrap().into()], location));
+        // let location = Location::unknown(&context);
+        // let mut module = Module::new(location);
 
-                // let operation = block.append_operation(
-                //     operation::OperationBuilder::new("func.return", Location::unknown(&context))
-                //         .build()
-                //         .unwrap(),
-                // );
+        // let index_type = Type::index(&context);
 
-                let region = Region::new();
-                region.append_block(block);
-                region
-            },
-            &[(
-                // Identifier::new(&context, "linkage"),
-                // melior::dialect::llvm::attributes::linkage(&context, melior::dialect::llvm::attributes::Linkage::External),
-                Identifier::new(&context, "llvm.emit_c_interface"),
-                Attribute::parse(&context, &format!("unit")).unwrap()
-                // melior::dialect::llvm::attributes::linkage(&context, melior::dialect::llvm::attributes::Linkage::External),
-            )],
-            location,
-        ));
-
-        // let mut module = Module::parse(
+        // module.body().append_operation(func::func(
         //     &context,
-        //     r#"
-        //     module {
-        //         func.func @add(%arg0 : i32) -> i32 attributes { llvm.emit_c_interface } {
-        //             %res = arith.addi %arg0, %arg0 : i32
-        //             return %res : i32
-        //         }
-        //     }
-        //     "#,
-        // )
-        // .unwrap();
+        //     StringAttribute::new(&context, "add"),
+        //     // TypeAttribute::new(FunctionType::new(&context, &[index_type, index_type], &[index_type]).into()),
+        //     TypeAttribute::new(FunctionType::new(&context, &[index_type, index_type], &[index_type]).into()),
+        //     {
+        //         let block = Block::new(&[(index_type, location), (index_type, location)]);
+        //         // let block = Block::new(&[(index_type, location)]);
 
-        assert!(module.as_operation().verify());
+        //         let sum = block.append_operation(arith::addi(
+        //             block.argument(0).unwrap().into(),
+        //             block.argument(1).unwrap().into(),
+        //             location
+        //         ));
 
-        // melior::
+        //         block.append_operation(func::r#return( &[sum.result(0).unwrap().into()], location));
+        //         // block.append_operation(func::r#return( &[block.argument(0).unwrap().into()], location));
+
+        //         // let operation = block.append_operation(
+        //         //     operation::OperationBuilder::new("func.return", Location::unknown(&context))
+        //         //         .build()
+        //         //         .unwrap(),
+        //         // );
+
+        //         let region = Region::new();
+        //         region.append_block(block);
+        //         region
+        //     },
+        //     &[(
+        //         // Identifier::new(&context, "linkage"),
+        //         // melior::dialect::llvm::attributes::linkage(&context, melior::dialect::llvm::attributes::Linkage::External),
+        //         Identifier::new(&context, "llvm.emit_c_interface"),
+        //         Attribute::parse(&context, &format!("unit")).unwrap()
+        //         // melior::dialect::llvm::attributes::linkage(&context, melior::dialect::llvm::attributes::Linkage::External),
+        //     )],
+        //     location,
+        // ));
+
+        // println!("PRE:");
+        // println!("{}", mlir_module.body().to_string());
+
+        assert!(mlir_module.as_operation().verify());
 
         println!("PRE:");
-        println!("{}", module.body().to_string());
+        println!("{}", mlir_module.body().to_string());
 
-        let pass_manager = pass::PassManager::new(&context);
-
+        let pass_manager = PassManager::new(&context);
         pass_manager.add_pass(pass::conversion::create_func_to_llvm());
+
         pass_manager
             .nested_under("func.func")
             .add_pass(pass::conversion::create_arith_to_llvm());
@@ -254,87 +291,35 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         pass_manager.add_pass(pass::conversion::create_control_flow_to_llvm());
         pass_manager.add_pass(pass::conversion::create_finalize_mem_ref_to_llvm());
 
-        // let pass_manager = pass::PassManager::new(&context);
-        // pass_manager.add_pass(pass::conversion::create_func_to_llvm());
+        pass_manager.add_pass(pass::conversion::create_func_to_llvm());
 
-        // pass_manager
-        //     .nested_under("func.func")
-        //     .add_pass(pass::conversion::create_arith_to_llvm());
+        pass_manager.run(&mut mlir_module).unwrap();
 
-        // pass_manager
-        //     // .nested_under("func.func")
-        //     .add_pass(pass::conversion::create_control_flow_to_llvm());
+        assert!(mlir_module.as_operation().verify());
 
-        // pass_manager
-        //     // .nested_under("func.func")
-        //     .add_pass(pass::conversion::create_linalg_to_llvm());
-
-            // mlirCreateConversionArithToLLVMConversionPass,
-
-        // create_ArithToLLVMConversionPass
-        // create_Convert_Async_To_LLVM
-        // create_Convert_Complex_To_LLVM
-        // create_Convert_Control_Flow_To_LLVM
-        // create_Convert_Func_To_LLVM
-        // create_Convert_Index_To_LLVM
-        // create_linalg_to_llvm
-        // create_Convert_Math_To_LLVM
-        // create_Convert_Open_MP_To_LLVM
-        // create_Convert_SPIRV_To_LLVM
-        // create_Convert_Vector_To_LLVM
-        // create_GpuToLLVMConversionPass
-        // create_LowerHostCodeToLLVMPass
-        // create_FinalizeMemRefToLLVMConversionPass
-
-        // pass_manager.add_pass(pass::conversion::create_)
-
-        pass_manager.run(&mut module).unwrap();
-
-        let engine = ExecutionEngine::new(&module, 2, &[], false);
-
-        let mut argument = 42;
-        let mut argument2 = 42;
-        let mut result = -1;
-
-        println!("POST:");
-        println!("{}", module.body().to_string());
-
-        // ExecutionEngine::new(&module, 2, &[], true).dump_to_object_file("test.o");
-
-
-        unsafe {
-            engine.invoke_packed(
-                "add",
-                &mut [
-                    &mut argument as *mut i32 as *mut (),
-                    &mut argument2 as *mut i32 as *mut (),
-                    &mut result as *mut i32 as *mut (),
-                ],
-            ).unwrap();
-
-            println!("result: {:#?}", result);
-        }
-
-        // melior::utility::parse_pass_pipeline(manager, source)
-
-        // let engine = ExecutionEngine::new( &module, 2, &[], true);
+        let engine = ExecutionEngine::new(&mlir_module, 2, &[], false);
 
         // let mut argument = 42;
+        // let mut argument2 = 42;
         // let mut result = -1;
 
-        // let args = &mut [
-        //     &mut argument as *mut i32 as *mut (),
-        //     &mut result as *mut i32 as *mut (),
-        // ];
+        println!("POST:");
+        println!("{}", mlir_module.body().to_string());
 
-        // unsafe { engine.invoke_packed("add",
-        // args).unwrap() };
+        // unsafe {
+        //     engine.invoke_packed(
+        //         "add",
+        //         &mut [
+        //             &mut argument as *mut i32 as *mut (),
+        //             &mut argument2 as *mut i32 as *mut (),
+        //             &mut result as *mut i32 as *mut (),
+        //         ],
+        //     ).unwrap();
 
+        //     println!("result: {:#?}", result);
+        // }
 
-
-
-
-
+        unsafe { engine.invoke_packed("main", &mut []).unwrap() }
 
 
 
@@ -487,16 +472,52 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         // }
     }
 
-    // fn compile_ast(&mut self) {
-    //     match &self.parser_result.ast {
-    //         Node::Module(module) => {
-    //             self.compile_module(module);
-    //         }
-    //         _ => {
-    //             panic!("Expected module to compile")
-    //         }
-    //     }
-    // }
+    fn compile_ast(&mut self) {
+        match &self.parser_result.ast {
+            Node::Module(module) => {
+                self.compile_module(module);
+            }
+            _ => {
+                panic!("Expected module to compile")
+            }
+        }
+    }
+
+    fn compile_module(&mut self, module: &parser::Module) {
+        // for node in module.body.iter() {
+        //     match &node {
+        //         Node::Def(def) => {
+        //             self.compile_prototype(&def);
+        //         },
+        //         Node::Class(class) => {
+        //             self.compile_class(class);
+        //         }
+        //         _ => panic!("Unable to add prototype, only functions are currently supported at the top level")
+        //     }
+        // }
+
+        // println!("{:#?}", "new1");
+        // println!("{:#?}", module);
+
+        for node in module.body.iter() {
+            match &node {
+                Node::Class(_) => {},
+                Node::AssignLocalVar(_) => todo!(),
+                Node::Binary(_) => todo!(),
+                Node::Call(_) => todo!(),
+                Node::Def(def) => { self.compile_fn(def) }
+                Node::Int(_) => todo!(),
+                Node::InterpolableString(_) => todo!(),
+                Node::LocalVar(_) => todo!(),
+                Node::Module(_) => todo!(),
+                Node::Impl(_) => todo!(),
+                Node::Trait(_) => todo!(),
+                Node::SelfRef(_) => todo!(),
+                Node::Send(_) => todo!(),
+                Node::DefE(def_e) => self.compile_external_fn(def_e),
+            }
+        }
+    }
 
     // fn compile_class(&mut self, class: &parser::Class) {
     //     let (_, last_id) = self.class_ids.iter().last().unwrap_or((&"".to_string(), &0));
@@ -511,42 +532,397 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     //     self.class_ids.insert(class.name.clone(), new_id);
     // }
 
-    // fn compile_module(&mut self, module: &parser::Module) {
-    //     for node in module.body.iter() {
-    //         match &node {
-    //             Node::Def(def) => {
-    //                 self.compile_prototype(&def);
-    //             },
-    //             Node::Class(class) => {
-    //                 self.compile_class(class);
-    //             }
-    //             _ => panic!("Unable to add prototype, only functions are currently supported at the top level")
-    //         }
-    //     }
+    fn compile_fn(&mut self, node: &parser::Def) {
+        let name = StringAttribute::new(&self.context, &node.prototype.name);
+        let fn_signature = TypeAttribute::new(FunctionType::new(&self.context, &[], &[]).into());
+        let region = self.compile_fn_body(node).unwrap();
 
-    //     println!("{:#?}", "new1");
-    //     println!("{:#?}", module);
+        let mut attributes = vec![
+            // (
+            //     Identifier::new(&self.context, "sym_visibility"),
+            //     StringAttribute::new(&self.context, "private").into(),
+            // ),
+        ];
 
-    //     for node in module.body.iter() {
-    //         match &node {
-    //             Node::Class(_) => {},
-    //             Node::AssignLocalVar(_) => todo!(),
-    //             Node::Binary(_) => todo!(),
-    //             Node::Call(_) => todo!(),
-    //             Node::Def(def) => {
-    //                 self.compile_fn(def).unwrap();
-    //             }
-    //             Node::Int(_) => todo!(),
-    //             Node::InterpolableString(_) => todo!(),
-    //             Node::LocalVar(_) => todo!(),
-    //             Node::Module(_) => todo!(),
-    //             Node::Impl(_) => todo!(),
-    //             Node::Trait(_) => todo!(),
-    //             Node::SelfRef(_) => todo!(),
-    //             Node::Send(_) => todo!(),
-    //         }
-    //     }
-    // }
+        if node.main_fn {
+            attributes.push(
+                (
+                    Identifier::new(&self.context, "llvm.emit_c_interface"),
+                    Attribute::parse(&self.context, &format!("unit")).unwrap()
+                )
+            );
+        }
+
+        let location = Location::unknown(&self.context);
+        let operation = func::func(&self.context, name, fn_signature, region, &attributes, location);
+
+        self.mlir_module.body().append_operation(operation);
+    }
+
+    fn compile_external_fn(&mut self, node: &parser::DefE) {
+        let name = StringAttribute::new(&self.context, &node.prototype.name);
+
+        let mut inputs = vec![];
+
+        for arg in &node.prototype.args {
+            match arg.return_type {
+                parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 32).into()),
+                parser::BaseType::StringType => todo!(),
+                parser::BaseType::Void => todo!(),
+                parser::BaseType::Undef(_) => todo!(),
+            }
+        }
+
+        let results = [];
+
+        let fn_signature = TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
+        let region = Region::new();
+        let attributes = &[(
+            Identifier::new(&self.context, "sym_visibility"),
+            StringAttribute::new(&self.context, "private").into(),
+        )];
+        let location = Location::unknown(&self.context);
+        let operation = func::func(&self.context, name, fn_signature, region, attributes, location);
+
+        self.mlir_module.body().append_operation(operation);
+    }
+
+    fn compile_fn_body(&mut self, node: &parser::Def) -> Result<Region<'ctx>, &'static str> {
+        let arguments = &[];
+        let block = Block::new(arguments);
+        let region = Region::new();
+
+        // compile body
+        for node in node.body.iter() {
+            // self.compile_expr(&block, node).unwrap();
+            self.compile_expr(&block, node);
+        }
+
+        block.append_operation(func::r#return( &[], Location::unknown(&self.context)));
+        region.append_block(block);
+
+
+        // match &node.prototype.return_type {
+        //     Some(rt) => match rt {
+        //         BaseType::Int => {
+        //             match last_body {
+        //                 Some(ret_type) => match ret_type {
+        //                     ReturnValue::IntValue(value) => self.builder.build_return(Some(&value)),
+        //                     _ => panic!("Expected Int"),
+        //                 },
+        //                 None => self.builder.build_return(None),
+        //             };
+        //         }
+        //         BaseType::StringType => {
+        //             match last_body {
+        //                 Some(ret_type) => match ret_type {
+        //                     // ReturnValue::ArrayPtrValue(value) => {
+        //                     //     self.builder.build_return(Some(&value))
+        //                     // }
+        //                     // ReturnValue::StructPtrValue(value) => {
+        //                     //     self.builder.build_return(Some(&value))
+        //                     // }
+        //                     ReturnValue::ArrayPtrValue(value) => {
+        //                         // let loaded_value = self.builder.build_load(self.llvm_types.array_ptr_type.clone(), value, "loaded_value");
+        //                         // let loaded_value = self.builder.build_load(self.llvm_types.array_ptr_type.clone(), value, "loaded_value");
+        //                         let loaded_value = self.builder.build_load(value.get_type(), value, "loaded_value");
+        //                         self.builder.build_return(Some(&loaded_value.unwrap()))
+        //                     }
+        //                     ReturnValue::StructPtrValue(value) => {
+        //                         let loaded_value = self.builder.build_load(value.get_type(), value, "loaded_value");
+        //                         self.builder.build_return(Some(&loaded_value.unwrap()))
+        //                     }
+        //                     ReturnValue::IntValue(_) => todo!(),
+        //                     ReturnValue::StructValue(value) => {
+        //                         self.builder.build_return(Some(&value))
+        //                     },
+        //                     ReturnValue::VoidValue => todo!(),
+
+        //                     // _ => panic!("Expected String"),
+        //                 },
+        //                 None => self.builder.build_return(None),
+        //             };
+        //         }
+        //         BaseType::Void => {
+        //             self.builder.build_return(None);
+        //         }
+        //         BaseType::Undef(name) => todo!(),
+        //     },
+        //     None => {
+        //         self.builder.build_return(None);
+        //     }
+        // }
+
+        Ok(region)
+    }
+
+    fn compile_expr(&self, block: &'a Block<'ctx>, expr: &Node) -> Result<Value<'ctx, '_>, &'static str> {
+        match *&expr {
+            Node::AssignLocalVar(asgn_lvar) => { self.compile_assign_local_var(block, asgn_lvar) },
+            Node::LocalVar(lvar) => self.compile_local_var(block, lvar),
+            Node::Binary(binary) => self.compile_binary(block, binary),
+            Node::InterpolableString(string) => self.compile_interpolable_string(block, string),
+            Node::Int(nb) => self.compile_int(block, nb),
+            Node::Call(call) => self.compile_call(block, call),
+            Node::SelfRef(lvar) => self.compile_self_ref(block, lvar),
+            Node::Send(node) => self.compile_send(block, node),
+            Node::Module(_) => panic!("Syntax error"),
+            Node::Def(_) => panic!("Syntax error"),
+            Node::DefE(_) => panic!("Syntax error"),
+            Node::Impl(_) => panic!("Syntax error"),
+            Node::Class(_) => panic!("Syntax error"),
+            Node::Trait(_) => panic!("Syntax error"),
+        }
+    }
+
+    fn compile_send(&self, block: &'a Block<'ctx>, node: &parser::Send) -> Result<Value<'ctx, '_>, &'static str> {
+        todo!()
+    }
+
+    fn compile_self_ref(&self, block: &'a Block<'ctx>, lvar: &parser::SelfRef) -> Result<Value<'ctx, '_>, &'static str> {
+        todo!()
+    }
+
+    fn compile_call(&self, block: &'a Block<'ctx>, call: &parser::Call) -> Result<Value<'ctx, '_>, &'static str> {
+        let none_type = Type::none(&self.context);
+        let location = Location::unknown(&self.context);
+
+        let i32_type = IntegerType::new(&self.context, 32).into();
+        let function_type = FunctionType::new(&self.context, &[i32_type], &[]);
+
+        let function = block.append_operation(func::constant(
+            &self.context,
+            FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str()),
+            function_type,
+            location,
+        ));
+
+        // let function = FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str());
+        // let arguments = &[block.argument(0).unwrap().into()];
+        let mut compiled_args = vec![];
+
+        for arg in &call.args {
+            let value = self.compile_expr(block, &arg).unwrap();
+            compiled_args.push(value);
+        }
+
+        // let result_types = &[];
+        let value = block
+            .append_operation(func::call_indirect(
+                // &self.context,
+                function.result(0).unwrap().into(), // stopped here, store/lookup function
+                &compiled_args,
+                // result_types,
+                &function_type
+                    .result(0)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                location,
+            ));
+            // .result(0);
+            // .map(Into::into)
+            // .ok();
+            // .result(0)
+            // .unwrap()
+            // .into();
+
+        // Ok(value)
+        Err("Wut")
+
+
+        // let location = Location::unknown(&self.context);
+
+
+        //         // let sum = block.append_operation(arith::addi(
+        //         //     block.argument(0).unwrap().into(),
+        //         //     block.argument(1).unwrap().into(),
+        //         //     location
+        //         // ));
+
+        //         let one = block.append_operation(arith::constant(
+        //             &self.context,
+        //             IntegerAttribute::new(1, Type::index(&self.context)).into(),
+        //             location,
+        //         ));
+
+        //         block.append_operation(func::r#return( &[], location));
+        //         // block.append_operation(func::r#return( &[block.argument(0).unwrap().into()], location));
+
+        //         // let operation = block.append_operation(
+        //         //     operation::OperationBuilder::new("func.return", Location::unknown(&context))
+        //         //         .build()
+        //         //         .unwrap(),
+        //         // );
+
+        // Ok(block)
+
+
+
+
+
+        // Node::Call(call) => match self.get_function(call.fn_name.as_str()) {
+        //     Some(fun) => {
+        //         let mut compiled_args = Vec::with_capacity(call.args.len());
+
+
+
+        //         // let mut arg_return_types = vec![];
+        //         // arg_return_types.reserve(call.args.len());
+
+        //         for arg in &call.args {
+        //             println!("{:#?}", "AAAAAAAAAAAARG");
+        //             println!("{:#?}", arg);
+
+        //             println!("{:#?}", call);
+
+        //             // match arg {
+        //             //     Node::Send(node) => {
+        //             //         match node.return_type.unwrap() {
+        //             //             BaseType::Int => todo!(),
+        //             //             BaseType::StringType => {
+        //             //                 arg_return_types.push(
+        //             //                     self.llvm_types.raw_array_ptr_type.ptr_type(AddressSpace::default())
+        //             //                 );
+        //             //             },
+        //             //             BaseType::Void => todo!(),
+        //             //             BaseType::Undef(undef) => {
+        //             //                 println!("NAMENAME: {:#?}", undef);
+
+        //             //                 arg_return_types.push(
+        //             //                     self.llvm_types.raw.ptr_type(AddressSpace::default())
+        //             //                 );
+        //             //             },
+        //             //         }
+        //             //     },
+        //             //     _ => BaseType::Void,
+        //             // };
+
+        //             compiled_args.push(self.compile_expr(&arg)?);
+        //         }
+
+        //         let mut i = 0;
+
+        //         let argsv: Vec<BasicMetadataValueEnum> = compiled_args
+        //             .iter()
+        //             .map(|val| match *val {
+        //                 Value::IntValue(float_value) => float_value.into(),
+        //                 // Value::ArrayPtrValue(string_ptr) => string_ptr.into(),
+        //                 Value::ArrayPtrValue(string_ptr) => {
+
+        //                     // stopped here, maybe an index to see if we need to cast
+        //                     // call.args[]
+
+        //                     println!("{:#?}", "INDEX:");
+        //                     println!("{:#?}", self.parser_index.fn_index);
+
+        //                     let fn_arg_types = self.parser_index.fn_index.get(fun.get_name().to_str().unwrap()).unwrap();
+
+        //                     let struct_type = match fn_arg_types[i] {
+        //                         BaseType::StringType => {
+        //                             // self.llvm_types.raw_array_ptr_type.ptr_type(AddressSpace::default())
+        //                             self.llvm_types.raw_array_ptr_type
+        //                         },
+        //                         BaseType::Undef(_) => {
+        //                             // self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default())
+        //                             self.llvm_types.raw_struct_ptr_type
+        //                         },
+        //                         _ => panic!("shouldnt reach here")
+        //                     };
+
+        //                     i += 1;
+
+        //                     // let struct_type = self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default());
+        //                     self.builder.build_bitcast(string_ptr, struct_type, "bitcasted_val").unwrap().into()
+
+        //                     // todo: pass other args
+
+        //                     // self.builder.build_call(class_fn, &[bitcasted_val.into()], "result")
+        //                     // self.builder.build_call(class_fn, &arg_return_types, "result")
+        //                 },
+        //                 Value::StructPtrValue(struct_ptr) => {
+        //                     let fn_arg_types = self.parser_index.fn_index.get(fun.get_name().to_str().unwrap()).unwrap();
+
+        //                     let struct_type = match fn_arg_types[i] {
+        //                         BaseType::StringType => {
+        //                             self.llvm_types.raw_array_ptr_type.ptr_type(AddressSpace::default())
+        //                         },
+        //                         BaseType::Undef(_) => {
+        //                             self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default())
+        //                         },
+        //                         _ => panic!("shouldnt reach here")
+        //                     };
+
+        //                     i += 1;
+
+        //                     // let struct_type = self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default());
+        //                     self.builder.build_bitcast(struct_ptr.as_basic_value_enum(), struct_type, "bitcasted_val").unwrap().into()
+
+        //                     // todo: pass other args
+
+        //                     // self.builder.build_call(class_fn, &[bitcasted_val.into()], "result")
+        //                     // self.builder.build_call(class_fn, &arg_return_types, "result")
+
+        //                     // println!("{}", self.llvm_module.print_to_string().to_string());
+        //                     // println!("{:#?}", node);
+        //                     // todo!()},
+        //                 },
+        //                 Value::StructValue(struct_value) => {
+        //                     struct_value.into()
+        //                 },
+        //                 Value::VoidValue => todo!(),
+
+        //                 // _ => todo!(),
+        //             })
+        //             .collect();
+
+        //         match self
+        //             .builder
+        //             .build_call(fun, argsv.as_slice(), "tmp")
+        //             .unwrap()
+        //             .try_as_basic_value()
+        //             .left()
+        //         {
+        //             Some(value) => match value {
+        //                 inkwell::values::BasicValueEnum::PointerValue(value) => {
+        //                     Ok(Value::ArrayPtrValue(value))
+        //                 }
+        //                 inkwell::values::BasicValueEnum::IntValue(value) => {
+        //                     Ok(Value::IntValue(value))
+        //                 }
+        //                 _ => todo!(),
+        //             },
+        //             None => Ok(Value::VoidValue),
+        //         }
+        //     }
+        //     None => Err("Unknown function."),
+        // }
+    }
+
+    fn compile_int(&self, block: &'a Block<'ctx>, nb: &parser::Int) -> Result<Value<'ctx, '_>, &'static str> {
+        let value = block.append_operation(arith::constant(
+            &self.context,
+            IntegerAttribute::new(nb.value as i64, IntegerType::new(&self.context, 32).into()).into(),
+            Location::unknown(&self.context),
+        )).result(0).unwrap().into();
+
+        Ok(value)
+    }
+
+    fn compile_interpolable_string(&self, block: &'a Block<'ctx>, string: &parser::InterpolableString) -> Result<Value<'ctx, '_>, &'static str> {
+        todo!()
+    }
+
+    fn compile_binary(&self, block: &'a Block<'ctx>, binary: &parser::Binary) -> Result<Value<'ctx, '_>, &'static str> {
+        todo!()
+    }
+
+    fn compile_local_var(&self, block: &'a Block<'ctx>, lvar: &parser::LocalVar) -> Result<Value<'ctx, '_>, &'static str> {
+        todo!()
+    }
+
+    fn compile_assign_local_var(&self, block: &'a Block<'ctx>, asgn_lvar: &parser::AssignLocalVar) -> Result<Value<'ctx, '_>, &'static str> {
+        todo!()
+    }
 
     // fn compile_fn(&mut self, node: &parser::Def) -> Result<FunctionValue<'ctx>, &'static str> {
     //     let proto = &node.prototype;

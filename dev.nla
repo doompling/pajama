@@ -1,17 +1,5 @@
-def base_print(string Str)
-end
-
-class Str
-   def test_fn() -> Str
-      what = "blaaaa"
-      what
-   end
-end
-
-def print(value Str)
-   base_print(value.test_fn())
-end
+def_e int_print(int Int)
 
 def main
-   print("Can anyone hear me?")
+   int_print(123)
 end
