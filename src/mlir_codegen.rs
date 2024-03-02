@@ -121,12 +121,12 @@ static EXTERNAL_FNS2: [fn(bytes: *const u8, initial_length: i32) -> *mut NillaSt
 
 
 #[no_mangle]
-pub fn int_print(int: i32) {
-    println!("int_print: {:#?}", int);
+pub fn print_int(int: i32) {
+    println!("print_int: {:#?}", int);
 }
 
 #[used]
-static EXTERNAL_FNS3: [fn(i32); 1] = [int_print];
+static EXTERNAL_FNS3: [fn(i32); 1] = [print_int];
 
 // #[derive(Debug)]
 // pub enum ReturnValue<'a> {
@@ -168,7 +168,7 @@ pub struct Compiler<'a, 'ctx> {
 //     return_type: LLVMType<'a>,
 // }
 
-use melior::dialect::index;
+use melior::dialect::{index, llvm};
 use melior::ir::attribute::{IntegerAttribute, FlatSymbolRefAttribute};
 use melior::ir::operation::OperationResult;
 use melior::ir::r#type::IntegerType;
@@ -319,7 +319,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         //     println!("result: {:#?}", result);
         // }
 
-        unsafe { engine.invoke_packed("main", &mut []).unwrap() }
+        let mut status_code = 0;
+
+        unsafe {
+            engine.invoke_packed("main", &mut [
+                &mut status_code as *mut i32 as *mut ()
+            ]).unwrap();
+        }
 
 
 
@@ -534,7 +540,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
     fn compile_fn(&mut self, node: &parser::Def) {
         let name = StringAttribute::new(&self.context, &node.prototype.name);
-        let fn_signature = TypeAttribute::new(FunctionType::new(&self.context, &[], &[]).into());
+
+        let fn_signature = if node.main_fn {
+            let i32_type = IntegerType::new(&self.context, 32).into();
+            TypeAttribute::new(FunctionType::new(&self.context, &[], &[i32_type]).into())
+        } else {
+            let void_type = llvm::r#type::void(&self.context);
+            TypeAttribute::new(FunctionType::new(&self.context, &[], &[void_type]).into())
+        };
+
         let region = self.compile_fn_body(node).unwrap();
 
         let mut attributes = vec![
@@ -573,7 +587,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             }
         }
 
-        let results = [];
+        let void_type = llvm::r#type::void(&self.context);
+        let results = [void_type];
 
         let fn_signature = TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
         let region = Region::new();
@@ -592,13 +607,31 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let block = Block::new(arguments);
         let region = Region::new();
 
-        // compile body
-        for node in node.body.iter() {
-            // self.compile_expr(&block, node).unwrap();
-            self.compile_expr(&block, node);
+        if node.body.iter().len() == 0 {
+            panic!("Empty body not supported")
         }
 
-        block.append_operation(func::r#return( &[], Location::unknown(&self.context)));
+        let last_op_index = node.body.len();
+
+        for (i, body_node) in node.body.iter().enumerate() {
+            let return_val = self.compile_expr(&block, body_node).unwrap();
+
+            let last_node = i == last_op_index - 1;
+            if last_node {
+                if node.main_fn {
+                    let success_int_value = block.append_operation(arith::constant(
+                        &self.context,
+                        IntegerAttribute::new(1 as i64, IntegerType::new(&self.context, 32).into()).into(),
+                        Location::unknown(&self.context),
+                    )).result(0).unwrap().into();
+
+                    block.append_operation(func::r#return( &[success_int_value], Location::unknown(&self.context)));
+                } else {
+                    block.append_operation(func::r#return( &[return_val], Location::unknown(&self.context)));
+                }
+            }
+        }
+
         region.append_block(block);
 
 
@@ -684,11 +717,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     }
 
     fn compile_call(&self, block: &'a Block<'ctx>, call: &parser::Call) -> Result<Value<'ctx, '_>, &'static str> {
-        let none_type = Type::none(&self.context);
+        let void_type = llvm::r#type::void(&self.context);
         let location = Location::unknown(&self.context);
 
         let i32_type = IntegerType::new(&self.context, 32).into();
-        let function_type = FunctionType::new(&self.context, &[i32_type], &[]);
+        let function_type = FunctionType::new(&self.context, &[i32_type], &[void_type]);
 
         let function = block.append_operation(func::constant(
             &self.context,
@@ -718,16 +751,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     .into_iter()
                     .collect::<Vec<_>>(),
                 location,
-            ));
+            ))
             // .result(0);
             // .map(Into::into)
             // .ok();
-            // .result(0)
-            // .unwrap()
-            // .into();
+            .result(0)
+            .unwrap()
+            .into();
 
-        // Ok(value)
-        Err("Wut")
+        Ok(value)
+        // Err("Wut")
 
 
         // let location = Location::unknown(&self.context);
