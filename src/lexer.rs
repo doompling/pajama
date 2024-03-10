@@ -94,13 +94,13 @@ impl Lexer<'_> {
                             whitespace_length += 1;
                             self.column_pos += 1;
                             pos += 1;
-                        },
-                        _ => { break }
+                        }
+                        _ => break,
                     }
                 }
 
                 Token::Space(whitespace_length)
-            },
+            }
             '\n' => {
                 self.line_pos += 1;
                 self.column_pos = 0;
@@ -119,13 +119,13 @@ impl Lexer<'_> {
                             self.line_pos += 1;
                             newline_length += 1;
                             pos += 1;
-                        },
-                        _ => { break }
+                        }
+                        _ => break,
                     }
                 }
 
                 Token::NewLine(newline_length)
-            },
+            }
             '(' => Token::LParen,
             ')' => Token::RParen,
             ',' => Token::Comma,
@@ -155,12 +155,8 @@ impl Lexer<'_> {
 
                 token_pos.end_column = self.column_pos;
 
-                Token::StringLiteral(
-                    token_pos,
-                    src[start + 1..pos - 1].to_string()
-                )
-            },
-
+                Token::StringLiteral(token_pos, src[start + 1..pos - 1].to_string())
+            }
 
             '1'..='9' => {
                 let mut token_pos = TokenPosition {
@@ -182,24 +178,21 @@ impl Lexer<'_> {
 
                             self.column_pos += 1;
                             pos += 1;
-                        },
+                        }
                         // '.' => {
                         //     self.chars.next();
 
                         //     self.column_pos += 1;
                         //     pos += 1;
                         // },
-                        _ => { break }
+                        _ => break,
                     }
                 }
 
                 token_pos.end_column = self.column_pos;
 
-                Token::Number(
-                    token_pos,
-                    src[start..pos].parse().unwrap()
-                )
-            },
+                Token::Number(token_pos, src[start..pos].parse().unwrap())
+            }
 
             'A'..='Z' => {
                 let mut token_pos = TokenPosition {
@@ -216,7 +209,7 @@ impl Lexer<'_> {
 
                     match ch {
                         'a'..='z' | 'A'..='Z' => {}
-                        _ => break
+                        _ => break,
                     }
 
                     self.chars.next();
@@ -231,7 +224,7 @@ impl Lexer<'_> {
                     ident => {
                         token_pos.end_column = self.column_pos;
                         Token::Const(token_pos, ident.to_string())
-                    },
+                    }
                 }
             }
 
@@ -250,7 +243,7 @@ impl Lexer<'_> {
 
                     match ch {
                         'a'..='z' | '_' => {}
-                        _ => break
+                        _ => break,
                     }
 
                     self.chars.next();
@@ -274,9 +267,9 @@ impl Lexer<'_> {
                     ident => {
                         token_pos.end_column = self.column_pos;
                         Token::Ident(token_pos, ident.to_string())
-                    },
+                    }
                 }
-            },
+            }
 
             '-' => {
                 let next_chr = match self.chars.peek() {
@@ -297,24 +290,17 @@ impl Lexer<'_> {
                 Token::Arrow
             }
 
-            '>' => {
-                Token::Op('>')
-            }
+            '>' => Token::Op('>'),
 
-
-            '=' => {
-                Token::Assign
-            }
+            '=' => Token::Assign,
 
             _ => {
                 println!("NOT IMPL{:#?}", ch);
                 todo!()
-            }
-
-            // op => {
-            //     // Parse operator
-            //     Ok(Token::Op(op))
-            // },
+            } // op => {
+              //     // Parse operator
+              //     Ok(Token::Op(op))
+              // },
         };
 
         // Update stored position, and return

@@ -239,7 +239,8 @@ impl<'a> Parser<'a> {
                 Token::DefE => self.parse_def_e(),
                 _ => {
                     println!("{:#?}", self.curr());
-                    Err("Expected class, def, or trait")},
+                    Err("Expected class, def, or trait")
+                }
             };
 
             for result in results? {
@@ -253,7 +254,7 @@ impl<'a> Parser<'a> {
                 // trait_index: self.index.trait_index
                 trait_index: HashMap::new(),
                 fn_index: HashMap::new(),
-            }
+            },
         })
     }
 
@@ -300,10 +301,14 @@ impl<'a> Parser<'a> {
                                 _ => BaseType::Undef(type_name),
                             };
 
-                            attributes.push(Node::Attribute(Attribute { name: attr_name, index, return_type }));
+                            attributes.push(Node::Attribute(Attribute {
+                                name: attr_name,
+                                index,
+                                return_type,
+                            }));
                             index += 1;
-                        },
-                        _ => return Err("Expected a type after the attribute name")
+                        }
+                        _ => return Err("Expected a type after the attribute name"),
                     }
                 }
                 _ => break,
@@ -334,7 +339,6 @@ impl<'a> Parser<'a> {
                 functions.push(result)
             }
         }
-
 
         Ok(functions)
     }
@@ -373,14 +377,14 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     println!("{:#?}", self.curr());
-                    return Err("Expected only def within a trait")},
+                    return Err("Expected only def within a trait");
+                }
             };
 
             for result in results? {
                 functions.push(result)
             }
         }
-
 
         Ok(functions)
     }
@@ -410,12 +414,21 @@ impl<'a> Parser<'a> {
 
         if let Some(nodes) = self.index.trait_index.get_mut(&impl_name) {
             println!("{:#?}", 2);
-            nodes.push(Class { name: class_name.clone(), attributes: vec![] });
+            nodes.push(Class {
+                name: class_name.clone(),
+                attributes: vec![],
+            });
         } else {
             println!("{:#?}", 3);
 
             self.index.trait_index.insert(
-                impl_name.clone(),vec![(Class { name: class_name.clone(), attributes: vec![] })]
+                impl_name.clone(),
+                vec![
+                    (Class {
+                        name: class_name.clone(),
+                        attributes: vec![],
+                    }),
+                ],
             );
 
             println!("{:#?}", self);
@@ -445,7 +458,12 @@ impl<'a> Parser<'a> {
         Ok(functions)
     }
 
-    fn parse_def(&mut self, class_name: String, impl_name: String, trait_name: String) -> Result<Vec<Node>, &'static str> {
+    fn parse_def(
+        &mut self,
+        class_name: String,
+        impl_name: String,
+        trait_name: String,
+    ) -> Result<Vec<Node>, &'static str> {
         // Advance past 'def' keyword
         self.pos += 1;
 
@@ -475,7 +493,7 @@ impl<'a> Parser<'a> {
                 _ => {
                     let expr = self.parse_expr(&ctx)?;
                     ctx.body.push(expr)
-                },
+                }
             }
         }
 
@@ -493,7 +511,10 @@ impl<'a> Parser<'a> {
         let fn_name = if !def_node.class_name.is_empty() {
             if !def_node.impl_name.is_empty() {
                 arg_return_types.push(BaseType::Undef(def_node.impl_name.clone()));
-                format!("{}:{}:{}", &def_node.class_name, &def_node.impl_name, &def_node.prototype.name)
+                format!(
+                    "{}:{}:{}",
+                    &def_node.class_name, &def_node.impl_name, &def_node.prototype.name
+                )
             } else {
                 if def_node.class_name == "Str" {
                     arg_return_types.push(BaseType::StringType)
@@ -576,7 +597,8 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 println!("{:#?}", self.curr());
-                return Err("Expected '(' character in prototype declaration. 2")},
+                return Err("Expected '(' character in prototype declaration. 2");
+            }
         }
 
         self.advance_optional_whitespace();
@@ -728,7 +750,7 @@ impl<'a> Parser<'a> {
         Ok(Node::Call(Call {
             fn_name: name,
             args: vec![self.parse_unary_expr(ctx)?],
-            return_type: None
+            return_type: None,
         }))
     }
 
@@ -750,7 +772,7 @@ impl<'a> Parser<'a> {
 
         match self.curr() {
             Token::Dot => self.parse_dot_expr(ctx, node),
-            _ => node
+            _ => node,
         }
     }
 
@@ -760,7 +782,7 @@ impl<'a> Parser<'a> {
                 self.advance();
 
                 Ok(Node::SelfRef(SelfRef {
-                    return_type: BaseType::Undef(ctx.class_name.clone())
+                    return_type: BaseType::Undef(ctx.class_name.clone()),
                 }))
             }
             _ => Err("Expected SelfRef"),
@@ -790,7 +812,7 @@ impl<'a> Parser<'a> {
                     return Ok(Node::Call(Call {
                         fn_name: ident_name,
                         args: vec![],
-                        return_type: None
+                        return_type: None,
                     }));
                 }
 
@@ -815,7 +837,11 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                Ok(Node::Call(Call { fn_name: ident_name, args, return_type: None }))
+                Ok(Node::Call(Call {
+                    fn_name: ident_name,
+                    args,
+                    return_type: None,
+                }))
             }
 
             _ => {
@@ -833,55 +859,59 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         // After all that, it's just a lvar. Fetch the type from the nearest assignment.
-                        let closest_assignment = ctx.body.iter().rev().find(|node| {
-                            match node {
-                                Node::AssignLocalVar(asgnLvar) => {
-                                    asgnLvar.name == ident_name
-                                },
-                                _ => false
-                            }
+                        let closest_assignment = ctx.body.iter().rev().find(|node| match node {
+                            Node::AssignLocalVar(asgnLvar) => asgnLvar.name == ident_name,
+                            _ => false,
                         });
 
                         match closest_assignment {
-                            Some(asgnLvar) => {
-                                match asgnLvar {
-                                    Node::AssignLocalVar(asgnLvar) => {
-                                        let return_type_name = match asgnLvar.value.as_ref() {
+                            Some(asgnLvar) => match asgnLvar {
+                                Node::AssignLocalVar(asgnLvar) => {
+                                    let return_type_name = match asgnLvar.value.as_ref() {
                                             Node::Int(_) => "Int",
                                             Node::InterpolableString(_) => "Str",
                                             Node::LocalVar(val) => val.nilla_class_name(),
                                             _ => return Err("Local variable assignment was given an unsupprted node")
                                         };
 
-                                        Ok(Node::LocalVar(LocalVar {
-                                            name: ident_name,
-                                            return_type: Some(BaseType::Undef(return_type_name.to_string())),
-                                        }))
-                                    },
-                                    _ => Err("Node other than AssignLocalVar in closest_assignment")
+                                    Ok(Node::LocalVar(LocalVar {
+                                        name: ident_name,
+                                        return_type: Some(BaseType::Undef(
+                                            return_type_name.to_string(),
+                                        )),
+                                    }))
                                 }
+                                _ => Err("Node other than AssignLocalVar in closest_assignment"),
                             },
                             None => {
-                                let arg_assignment = ctx.prototype.args.iter().find(|node| { node.name == ident_name });
+                                let arg_assignment = ctx
+                                    .prototype
+                                    .args
+                                    .iter()
+                                    .find(|node| node.name == ident_name);
 
                                 match arg_assignment {
-                                    Some(arg) => {
-                                        Ok(Node::LocalVar(LocalVar {
-                                            name: ident_name,
-                                            return_type: Some(BaseType::Undef(arg.nilla_class_name().to_string())),
-                                        }))
-                                    }
+                                    Some(arg) => Ok(Node::LocalVar(LocalVar {
+                                        name: ident_name,
+                                        return_type: Some(BaseType::Undef(
+                                            arg.nilla_class_name().to_string(),
+                                        )),
+                                    })),
                                     None => Err("Local variable isn't assigned anywhere"),
                                 }
                             }
                         }
-                    },
+                    }
                 }
             }
         }
     }
 
-    fn parse_dot_expr(&mut self, ctx: &ParserContext, receiver: Result<Node, &'static str>) -> Result<Node, &'static str> {
+    fn parse_dot_expr(
+        &mut self,
+        ctx: &ParserContext,
+        receiver: Result<Node, &'static str>,
+    ) -> Result<Node, &'static str> {
         let receiver = match receiver {
             Ok(node) => node,
             Err(err) => return Err(err),
@@ -890,32 +920,24 @@ impl<'a> Parser<'a> {
         self.advance();
 
         let node = match self.peek()? {
-            Token::LParen => {
-                match self.parse_dot_send_expr(ctx) {
-                    Ok(node) => {
-                        Ok(Node::Send(Send {
-                            receiver: Box::new(receiver),
-                            message: Box::new(node),
-                            return_type: Some(BaseType::Undef("".to_string()))
-                        }))
-                    },
-                    Err(err) => return Err(err)
-                }
+            Token::LParen => match self.parse_dot_send_expr(ctx) {
+                Ok(node) => Ok(Node::Send(Send {
+                    receiver: Box::new(receiver),
+                    message: Box::new(node),
+                    return_type: Some(BaseType::Undef("".to_string())),
+                })),
+                Err(err) => return Err(err),
             },
-            _ => {
-                match self.parse_dot_attribute_expr(ctx) {
-                    Ok(node) => {
-                        Ok(Node::Access(Access {
-                            receiver: Box::new(receiver),
-                            message: Box::new(node),
-                            index: 0,
-                            return_type: Some(BaseType::Undef("".to_string()))
-                        }))
-                    },
-                    Err(err) => return Err(err)
-                }
+            _ => match self.parse_dot_attribute_expr(ctx) {
+                Ok(node) => Ok(Node::Access(Access {
+                    receiver: Box::new(receiver),
+                    message: Box::new(node),
+                    index: 0,
+                    return_type: Some(BaseType::Undef("".to_string())),
+                })),
+                Err(err) => return Err(err),
             },
-            _ => return Err("Expected attribute or method call")
+            _ => return Err("Expected attribute or method call"),
         };
 
         self.advance_optional_whitespace();
@@ -939,8 +961,8 @@ impl<'a> Parser<'a> {
                     index: 0,
                     return_type: BaseType::Undef("".to_string()),
                 }))
-            },
-            _ => Err("Expected Identifier for attribute access")
+            }
+            _ => Err("Expected Identifier for attribute access"),
         }
     }
 
@@ -991,7 +1013,12 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses a binary expression, given its left-hand expression.
-    fn parse_binary_expr(&mut self, ctx: &ParserContext, prec: i32, mut left: Node) -> Result<Node, &'static str> {
+    fn parse_binary_expr(
+        &mut self,
+        ctx: &ParserContext,
+        prec: i32,
+        mut left: Node,
+    ) -> Result<Node, &'static str> {
         loop {
             if let Ok(Token::End) = self.current() {
                 // self.advance()?;

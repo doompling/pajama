@@ -1,6 +1,6 @@
 mod codegen;
-mod mlir_codegen;
 mod lexer;
+mod mlir_codegen;
 mod nilla_compiler;
 mod parser;
 mod semantic_analyzer;
