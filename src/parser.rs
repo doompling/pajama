@@ -1,6 +1,23 @@
 use std::{collections::HashMap, ops::Deref};
 
+use melior::ir::attribute;
+
 use crate::lexer::Token;
+
+#[derive(Debug)]
+pub struct Access {
+    pub receiver: Box<Node>,
+    pub message: Box<Node>,
+    pub index: i32,
+    pub return_type: Option<BaseType>,
+}
+
+#[derive(Debug)]
+pub struct Attribute {
+    pub name: String,
+    pub index: i32,
+    pub return_type: BaseType,
+}
 
 #[derive(Debug)]
 pub struct AssignLocalVar {
@@ -53,6 +70,7 @@ impl LocalVar {
                 BaseType::StringType => "Str",
                 BaseType::Void => "",
                 BaseType::Undef(class_name) => class_name.as_str(),
+                BaseType::BytePtr => "BytePtr",
             },
             None => "",
         }
@@ -67,7 +85,7 @@ pub struct Module {
 #[derive(Debug)]
 pub struct Class {
     pub name: String,
-    // pub attributes: Vec<Node>,
+    pub attributes: Vec<Node>,
 }
 
 #[derive(Debug)]
@@ -89,6 +107,8 @@ pub struct SelfRef {
 
 #[derive(Debug)]
 pub enum Node {
+    Access(Access),
+    Attribute(Attribute),
     SelfRef(SelfRef),
     AssignLocalVar(AssignLocalVar),
     Binary(Binary),
@@ -114,6 +134,7 @@ pub enum Node {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BaseType {
+    BytePtr,
     Int,
     StringType,
     Void,
@@ -129,6 +150,7 @@ pub struct Arg {
 impl Arg {
     pub fn nilla_class_name(&self) -> &str {
         match &self.return_type {
+            BaseType::BytePtr => "BytePtr",
             BaseType::Int => "Int",
             BaseType::StringType => "Str",
             BaseType::Void => "",
@@ -177,7 +199,8 @@ pub struct ParserResultIndex {
 pub struct ParserContext {
     pub class_name: String,
     pub body: Vec<Node>,
-    pub prototype: Prototype
+    pub prototype: Prototype,
+    pub parsing_dot: bool,
 }
 
 #[derive(Debug)]
@@ -255,10 +278,43 @@ impl<'a> Parser<'a> {
             _ => return Err("Expected a new line after class name"),
         };
 
+        // parse attributes
+        let mut attributes = vec![];
+        let mut index = 0;
+        loop {
+            self.advance_optional_whitespace();
+
+            match self.current()? {
+                Token::Ident(_attr_pos, attr_name) => {
+                    self.advance();
+                    self.advance_optional_whitespace();
+
+                    match self.current()? {
+                        Token::Const(_type_pos, type_name) => {
+                            self.advance();
+
+                            let return_type = match type_name.as_str() {
+                                "Str" => BaseType::StringType,
+                                "Int" => BaseType::Int,
+                                "BytePtr" => BaseType::BytePtr,
+                                _ => BaseType::Undef(type_name),
+                            };
+
+                            attributes.push(Node::Attribute(Attribute { name: attr_name, index, return_type }));
+                            index += 1;
+                        },
+                        _ => return Err("Expected a type after the attribute name")
+                    }
+                }
+                _ => break,
+            };
+        }
+
         let mut functions = vec![];
 
         functions.push(Node::Class(Class {
             name: class_name.clone(),
+            attributes,
         }));
 
         loop {
@@ -354,12 +410,12 @@ impl<'a> Parser<'a> {
 
         if let Some(nodes) = self.index.trait_index.get_mut(&impl_name) {
             println!("{:#?}", 2);
-            nodes.push(Class { name: class_name.clone() });
+            nodes.push(Class { name: class_name.clone(), attributes: vec![] });
         } else {
             println!("{:#?}", 3);
 
             self.index.trait_index.insert(
-                impl_name.clone(),vec![(Class { name: class_name.clone() })]
+                impl_name.clone(),vec![(Class { name: class_name.clone(), attributes: vec![] })]
             );
 
             println!("{:#?}", self);
@@ -401,6 +457,7 @@ impl<'a> Parser<'a> {
             class_name,
             body: vec![],
             prototype,
+            parsing_dot: false,
         };
 
         loop {
@@ -559,6 +616,7 @@ impl<'a> Parser<'a> {
             let return_type = match type_name.as_str() {
                 "Str" => BaseType::StringType,
                 "Int" => BaseType::Int,
+                "BytePtr" => BaseType::BytePtr,
                 _ => BaseType::Undef(type_name),
             };
 
@@ -630,6 +688,10 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Ok(Some(BaseType::Int))
                 }
+                "BytePtr" => {
+                    self.advance();
+                    Ok(Some(BaseType::BytePtr))
+                }
                 _ => {
                     self.advance();
                     Ok(Some(BaseType::Undef(name)))
@@ -687,7 +749,7 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
 
         match self.curr() {
-            Token::Dot => self.parse_send_expr(ctx, node),
+            Token::Dot => self.parse_dot_expr(ctx, node),
             _ => node
         }
     }
@@ -771,7 +833,6 @@ impl<'a> Parser<'a> {
                     }
                     _ => {
                         // After all that, it's just a lvar. Fetch the type from the nearest assignment.
-
                         let closest_assignment = ctx.body.iter().rev().find(|node| {
                             match node {
                                 Node::AssignLocalVar(asgnLvar) => {
@@ -812,7 +873,7 @@ impl<'a> Parser<'a> {
                                     }
                                     None => Err("Local variable isn't assigned anywhere"),
                                 }
-                            },
+                            }
                         }
                     },
                 }
@@ -820,7 +881,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_send_expr(&mut self, ctx: &ParserContext, receiver: Result<Node, &'static str>) -> Result<Node, &'static str> {
+    fn parse_dot_expr(&mut self, ctx: &ParserContext, receiver: Result<Node, &'static str>) -> Result<Node, &'static str> {
         let receiver = match receiver {
             Ok(node) => node,
             Err(err) => return Err(err),
@@ -828,25 +889,58 @@ impl<'a> Parser<'a> {
 
         self.advance();
 
-        let send_node = match self.curr() {
-            Token::Ident(pos, name) => {
-                match self.parse_ident_expr(ctx) {
-                    Ok(node) => Ok(Node::Send(Send {
-                        receiver: Box::new(receiver),
-                        message: Box::new(node),
-                        return_type: Some(BaseType::Undef("".to_string()))
-                    })),
-                    Err(err) => Err(err),
+        let node = match self.peek()? {
+            Token::LParen => {
+                match self.parse_dot_send_expr(ctx) {
+                    Ok(node) => {
+                        Ok(Node::Send(Send {
+                            receiver: Box::new(receiver),
+                            message: Box::new(node),
+                            return_type: Some(BaseType::Undef("".to_string()))
+                        }))
+                    },
+                    Err(err) => return Err(err)
                 }
             },
-            _ => Err("Expected an identifier after a dot"),
+            _ => {
+                match self.parse_dot_attribute_expr(ctx) {
+                    Ok(node) => {
+                        Ok(Node::Access(Access {
+                            receiver: Box::new(receiver),
+                            message: Box::new(node),
+                            index: 0,
+                            return_type: Some(BaseType::Undef("".to_string()))
+                        }))
+                    },
+                    Err(err) => return Err(err)
+                }
+            },
+            _ => return Err("Expected attribute or method call")
         };
 
         self.advance_optional_whitespace();
 
         match self.curr() {
-            Token::Dot => self.parse_send_expr(ctx, send_node),
-            _ => send_node,
+            Token::Dot => self.parse_dot_expr(ctx, node),
+            _ => node,
+        }
+    }
+
+    fn parse_dot_send_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+        self.parse_ident_expr(ctx)
+    }
+
+    fn parse_dot_attribute_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+        match self.current()? {
+            Token::Ident(_pos, ident_name) => {
+                self.advance()?;
+                Ok(Node::Attribute(Attribute {
+                    name: ident_name,
+                    index: 0,
+                    return_type: BaseType::Undef("".to_string()),
+                }))
+            },
+            _ => Err("Expected Identifier for attribute access")
         }
     }
 

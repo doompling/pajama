@@ -1,7 +1,8 @@
 use crate::{mi_malloc, parser};
-use crate::parser::{ParserResult, ParserResultIndex, Parser, Node};
+use crate::parser::{ParserResult, ParserResultIndex, Parser, Node, BaseType, Def};
 use std::array;
 use std::collections::{HashMap, BTreeMap};
+use std::hash::Hash;
 
 // #[derive(Debug, Clone)]
 // pub enum LLVMType<'a> {
@@ -20,7 +21,7 @@ use std::collections::{HashMap, BTreeMap};
 #[derive(Debug)]
 #[repr(C)]
 pub struct NillaString {
-    id: i32,
+    // id: i32,
     buffer: *mut u8,
     length: i32,
     max_length: i32,
@@ -36,7 +37,7 @@ impl NillaString {
         }
 
         let nilla_string = NillaString {
-            id: 1,
+            // id: 1,
             buffer: ptr,
             length,
             max_length: length,
@@ -125,8 +126,32 @@ pub fn print_int(int: i32) {
     println!("print_int: {:#?}", int);
 }
 
+#[no_mangle]
+// pub fn print_bytes(bytes: *mut u8, len: i32) {
+pub fn print_bytes(bytes: *const u8) {
+    // println!("bytes {:#?}", bytes);
+    // println!("len {:#?}", len);
+
+    // if bytes.is_null() || len == 0 {
+    //     println!("Invalid input: null pointer or zero length");
+    //     return;
+    // }
+
+    // Create a slice from the raw pointer and length
+    // let slice = unsafe { std::slice::from_raw_parts_mut(bytes, len as usize) };
+    let slice = unsafe { std::slice::from_raw_parts(bytes, 5) };
+
+    // Print the bytes as characters (assumes text data)
+    for byte in slice {
+        print!("{}", *byte as char);
+    }
+    // stdout().flush().unwrap(); // Ensure output is displayed
+}
+
 #[used]
 static EXTERNAL_FNS3: [fn(i32); 1] = [print_int];
+#[used]
+static EXTERNAL_FNS4: [fn(*const u8); 1] = [print_bytes];
 
 // #[derive(Debug)]
 // pub enum ReturnValue<'a> {
@@ -148,17 +173,31 @@ static EXTERNAL_FNS3: [fn(i32); 1] = [print_int];
 
 /// Defines the `Expr` compiler.
 #[derive(Debug)]
+pub struct LlvmTypes<'ctx> {
+    // pub parser_result: &'a ParserResult,
+    pub i8_type: Type<'ctx>,
+    pub i8_ptr_type: Type<'ctx>,
+    pub i8_array_type: Type<'ctx>,
+    pub i8_array_ptr_type: Type<'ctx>,
+    pub i64_type: Type<'ctx>,
+    pub struct_type: Type<'ctx>,
+    pub struct_ptr_type: Type<'ctx>,
+}
+
+/// Defines the `Expr` compiler.
+#[derive(Debug)]
 pub struct Compiler<'a, 'ctx> {
     pub parser_result: &'a ParserResult,
     pub context: &'ctx Context,
     pub mlir_module: &'a Module<'ctx>,
+    pub llvm_types: LlvmTypes<'ctx>,
     // pub builder: &'a Builder<'ctx>,
     // pub llvm_module: &'a Module<'ctx>,
     // pub llvm_types: &'a NillaLLVMTypes<'ctx>,
 
     pub parser_index: &'a ParserResultIndex,
-    pub class_ids: BTreeMap<String, u64>,
-    // pub local_variables: HashMap<String, LocalVarRef<'ctx>>,
+    // pub class_ids: BTreeMap<String, u64>,
+    pub local_variables: HashMap<String, Value<'ctx, 'a>>,
     // pub fn_value_opt: Option<FunctionValue<'ctx>>,
 }
 
@@ -168,12 +207,14 @@ pub struct Compiler<'a, 'ctx> {
 //     return_type: LLVMType<'a>,
 // }
 
-use melior::dialect::{index, llvm};
-use melior::ir::attribute::{IntegerAttribute, FlatSymbolRefAttribute};
-use melior::ir::operation::OperationResult;
-use melior::ir::r#type::IntegerType;
+use melior::dialect::llvm::AllocaOptions;
+use melior::dialect::llvm::attributes::{Linkage, linkage};
+use melior::dialect::{index, llvm, memref};
+use melior::ir::attribute::{IntegerAttribute, FlatSymbolRefAttribute, DenseElementsAttribute, DenseI64ArrayAttribute, ArrayAttribute, DenseI32ArrayAttribute};
+use melior::ir::operation::{OperationResult, OperationBuilder};
+use melior::ir::r#type::{IntegerType, MemRefType, RankedTensorType};
 use melior::pass::PassManager;
-use melior::{ExecutionEngine, pass};
+use melior::{ExecutionEngine, pass, StringRef};
 use melior::{
     Context,
     dialect::{arith, DialectRegistry, func, func::call, llvm::r#type},
@@ -208,6 +249,37 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         });
 
 
+
+        let i8_type = IntegerType::new(&context, 8).into();
+        let i8_ptr_type = llvm::r#type::r#pointer(i8_type, 0);
+        let i8_array_type = llvm::r#type::array(i8_type, 5);
+        let i8_array_ptr_type = llvm::r#type::r#pointer(i8_array_type, 0);
+        let i64_type = IntegerType::new(&context, 64).into();
+
+
+        let struct_fields = [
+            i8_ptr_type.into(),
+            i8_type.clone(),
+            i8_type.clone(),
+        ];
+        let struct_type = llvm::r#type::r#struct(&context, &struct_fields, false);
+        let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
+
+        let llvm_types = LlvmTypes {
+            i8_type,
+            i8_ptr_type,
+            i8_array_type,
+            i8_array_ptr_type,
+            struct_type,
+            struct_ptr_type,
+            i64_type,
+        };
+
+
+
+
+
+
         let location = Location::unknown(&context);
         let mut mlir_module = Module::new(location);
 
@@ -215,13 +287,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             parser_result: &parser_result,
             context: &context,
             mlir_module: &mlir_module,
+            llvm_types,
+            // mlir_module_block: &module_block,
             // builder: &builder,
             // llvm_module: &module,
             // fn_value_opt: None,
             // local_variables: HashMap::new(),
             // llvm_types: &llvm_types,
-            class_ids: BTreeMap::new(),
+            // class_ids: BTreeMap::new(),
             parser_index: &parser.index,
+            local_variables: HashMap::new(),
         };
 
         compiler.compile_ast();
@@ -273,10 +348,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         // println!("PRE:");
         // println!("{}", mlir_module.body().to_string());
 
+        println!("PRE VERIFICATION:");
+        println!("{}", mlir_module.body().to_string());
+
         assert!(mlir_module.as_operation().verify());
 
-        println!("PRE:");
-        println!("{}", mlir_module.body().to_string());
+        // println!("PRE:");
+        // println!("{}", mlir_module.body().to_string());
 
         let pass_manager = PassManager::new(&context);
         pass_manager.add_pass(pass::conversion::create_func_to_llvm());
@@ -507,11 +585,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         for node in module.body.iter() {
             match &node {
-                Node::Class(_) => {},
+                Node::Class(class) => self.compile_class(class),
+                    Node::Def(def) => self.compile_fn(def),
+                Node::DefE(def_e) => self.compile_external_fn(def_e),
+                Node::Attribute(_) => todo!(),
                 Node::AssignLocalVar(_) => todo!(),
                 Node::Binary(_) => todo!(),
                 Node::Call(_) => todo!(),
-                Node::Def(def) => { self.compile_fn(def) }
                 Node::Int(_) => todo!(),
                 Node::InterpolableString(_) => todo!(),
                 Node::LocalVar(_) => todo!(),
@@ -520,7 +600,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 Node::Trait(_) => todo!(),
                 Node::SelfRef(_) => todo!(),
                 Node::Send(_) => todo!(),
-                Node::DefE(def_e) => self.compile_external_fn(def_e),
+                Node::Access(_) => todo!(),
             }
         }
     }
@@ -537,6 +617,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
     //     self.class_ids.insert(class.name.clone(), new_id);
     // }
+
+    fn compile_class(&mut self, node: &parser::Class) {
+        // :D
+    }
 
     fn compile_fn(&mut self, node: &parser::Def) {
         let name = StringAttribute::new(&self.context, &node.prototype.name);
@@ -580,10 +664,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         for arg in &node.prototype.args {
             match arg.return_type {
-                parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 32).into()),
+                parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 64).into()),
                 parser::BaseType::StringType => todo!(),
                 parser::BaseType::Void => todo!(),
                 parser::BaseType::Undef(_) => todo!(),
+                parser::BaseType::BytePtr => inputs.push(
+                    self.llvm_types.i8_ptr_type.clone().into()
+                ),
             }
         }
 
@@ -606,6 +693,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let arguments = &[];
         let block = Block::new(arguments);
         let region = Region::new();
+        let mut local_vars: HashMap<String, Value<'ctx, '_>> = HashMap::new();
 
         if node.body.iter().len() == 0 {
             panic!("Empty body not supported")
@@ -614,14 +702,17 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let last_op_index = node.body.len();
 
         for (i, body_node) in node.body.iter().enumerate() {
-            let return_val = self.compile_expr(&block, body_node).unwrap();
+            let return_val = match self.compile_expr(&block, body_node, &mut local_vars) {
+                Ok(ret_val) => ret_val,
+                Err(e) => return Err(e),
+            };
 
             let last_node = i == last_op_index - 1;
             if last_node {
                 if node.main_fn {
                     let success_int_value = block.append_operation(arith::constant(
                         &self.context,
-                        IntegerAttribute::new(1 as i64, IntegerType::new(&self.context, 32).into()).into(),
+                        IntegerAttribute::new(IntegerType::new(&self.context, 32).into(), 1 as i64).into(),
                         Location::unknown(&self.context),
                     )).result(0).unwrap().into();
 
@@ -689,16 +780,18 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(region)
     }
 
-    fn compile_expr(&self, block: &'a Block<'ctx>, expr: &Node) -> Result<Value<'ctx, '_>, &'static str> {
+    fn compile_expr(&self, block: &'a Block<'ctx>, expr: &Node, local_vars: &mut HashMap<String, Value<'ctx, 'a>>) -> Result<Value<'ctx, '_>, &'static str> {
         match *&expr {
-            Node::AssignLocalVar(asgn_lvar) => { self.compile_assign_local_var(block, asgn_lvar) },
-            Node::LocalVar(lvar) => self.compile_local_var(block, lvar),
-            Node::Binary(binary) => self.compile_binary(block, binary),
+            Node::Attribute(_) => panic!("Syntax error"),
+            Node::AssignLocalVar(asgn_lvar) => { self.compile_assign_local_var(block, asgn_lvar, local_vars) },
+            Node::LocalVar(lvar) => self.compile_local_var(block, lvar, local_vars),
+            Node::Binary(binary) => self.compile_binary(block, binary, local_vars),
             Node::InterpolableString(string) => self.compile_interpolable_string(block, string),
             Node::Int(nb) => self.compile_int(block, nb),
-            Node::Call(call) => self.compile_call(block, call),
+            Node::Call(call) => self.compile_call(block, call, local_vars),
             Node::SelfRef(lvar) => self.compile_self_ref(block, lvar),
             Node::Send(node) => self.compile_send(block, node),
+            Node::Access(node) => self.compile_attribute_access(block, node, local_vars),
             Node::Module(_) => panic!("Syntax error"),
             Node::Def(_) => panic!("Syntax error"),
             Node::DefE(_) => panic!("Syntax error"),
@@ -706,6 +799,329 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::Class(_) => panic!("Syntax error"),
             Node::Trait(_) => panic!("Syntax error"),
         }
+    }
+
+    fn compile_attribute_access(&self, block: &'a Block<'ctx>, node: &parser::Access, local_vars: &mut HashMap<String, Value<'ctx, 'a>>) -> Result<Value<'ctx, '_>, &'static str> {
+        let value =
+            match &*node.receiver {
+                Node::LocalVar(lvar) => {
+                    let lvar_value = local_vars.get(&lvar.name).unwrap();
+
+                    // let attribute_index =
+                    //     match &*node.message {
+                    //         Node::Attribute(attr_node) => {
+                    //             // attr_node.name.clone()
+                    //             println!("{:#?}", attr_node);
+
+                    //             attr_node.index as i64
+                    //         },
+                    //         _ => return Err("Syntax Error: Expected attribute name for {class_name}")
+                    //     };
+                    let attribute_index = node.index;
+
+                    println!("attr_index {:#?}", attribute_index);
+
+                    match &lvar.return_type {
+                        Some(rt) => match rt {
+                            BaseType::BytePtr => todo!(),
+                            BaseType::Int => todo!(),
+                            BaseType::StringType => todo!(),
+                            BaseType::Void => todo!(),
+                            BaseType::Undef(name) => match name.as_str() {
+                                "Str" => {
+                                    let result_type = match &node.return_type {
+                                        Some(rt) => match rt {
+                                            BaseType::BytePtr => self.llvm_types.i8_ptr_type,
+                                            BaseType::Int => self.llvm_types.i64_type,
+                                            BaseType::StringType => todo!(),
+                                            BaseType::Void => todo!(),
+                                            BaseType::Undef(_) => todo!(),
+                                        },
+                                        None => todo!(),
+                                    };
+
+                                    let loaded_val = block.append_operation(
+                                        // llvm::load(&self.context, *lvar_value, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
+                                        // llvm::load(&self.context, *lvar_value, llvm::r#type::r#pointer(self.llvm_types.struct_ptr_type, 0), Location::unknown(&self.context), Default::default())
+                                        llvm::load(&self.context, *lvar_value, self.llvm_types.struct_ptr_type, Location::unknown(&self.context), Default::default())
+                                    );
+
+                                    let gep = block.append_operation(llvm::get_element_ptr(
+                                        &self.context,
+                                        loaded_val.result(0).unwrap().into(),
+                                        DenseI32ArrayAttribute::new(&self.context, &[0, attribute_index]),
+                                        // integer_type,
+                                        llvm::r#type::r#pointer(result_type, 0),
+                                        Location::unknown(&self.context),
+                                    ));
+
+                                    let thing = gep.to_string_with_flags(
+                                        operation::OperationPrintingFlags::new()
+                                            .elide_large_elements_attributes(100)
+                                            .enable_debug_info(true, true)
+                                            .print_generic_operation_form()
+                                            .use_local_scope()
+                                    );
+                                    println!("debug: {:#?}", thing.unwrap());
+
+                                    block.append_operation(
+                                        // llvm::load(&self.context, *lvar_value, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
+                                        llvm::load(&self.context, gep.result(0).unwrap().into(), result_type, Location::unknown(&self.context), Default::default())
+                                    )
+
+
+
+
+                                    // let index = block
+                                    //     .append_operation(arith::constant(
+                                    //         &self.context,
+                                    //         IntegerAttribute::new(self.llvm_types.i64_type.clone(), attribute_index as i64).into(),
+                                    //         Location::unknown(&self.context),
+                                    //     ))
+                                    //     .result(0)
+                                    //     .unwrap()
+                                    //     .into();
+
+                                    // let attribute_ptr = block.append_operation(llvm::get_element_ptr_dynamic(
+                                    //     &self.context,
+                                    //     loaded_val.result(0).unwrap().into(),
+                                    //     &[index],
+                                    //     None,
+                                    //     // llvm::r#type::r#pointer(self.basetype_to_mlir_type(node.return_type.clone().unwrap()), 0),
+                                    //     llvm::r#type::r#pointer(result_type, 0),
+                                    //     Location::unknown(&self.context),
+                                    // )).result(0).unwrap().into();
+
+                                    // let loaded_val = block.append_operation(
+                                    //     // llvm::load(&self.context, *lvar_value, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
+                                    //     llvm::load(&self.context, attribute_ptr, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
+                                    // );
+
+
+
+                                    // let zero = block
+                                    //     .append_operation(arith::constant(
+                                    //         &self.context,
+                                    //         IntegerAttribute::new(self.llvm_types.i64_type.clone(), 0).into(),
+                                    //         Location::unknown(&self.context),
+                                    //     ))
+                                    //     .result(0)
+                                    //     .unwrap()
+                                    //     .into();
+
+
+                                    // block.append_operation(llvm::get_element_ptr_dynamic(
+                                    //     &self.context,
+                                    //     attribute_ptr,
+                                    //     &[zero],
+                                    //     None,
+                                    //     self.llvm_types.i8_ptr_type,
+                                    //     Location::unknown(&self.context),
+                                    // ))
+                                },
+                                _ => todo!(),
+                            },
+                        },
+                        None => todo!(),
+                    }
+
+
+
+
+                    // return match &node.return_type {
+                    //     Some(rt) => match rt {
+                    //         BaseType::BytePtr => {
+                    //             let index = block
+                    //                 .append_operation(arith::constant(
+                    //                     &self.context,
+                    //                     IntegerAttribute::new(self.llvm_types.i64_type.clone(), attribute_index).into(),
+                    //                     Location::unknown(&self.context),
+                    //                 ))
+                    //                 .result(0)
+                    //                 .unwrap()
+                    //                 .into();
+
+                    //             let attribute_ptr = block.append_operation(llvm::get_element_ptr_dynamic(
+                    //                 &self.context,
+                    //                 loaded_val.result(0).unwrap().into(),
+                    //                 &[index],
+                    //                 None,
+                    //                 llvm::r#type::r#pointer(self.basetype_to_mlir_type(node.return_type.clone().unwrap()), 0),
+                    //                 Location::unknown(&self.context),
+                    //             )).result(0).unwrap().into();
+
+                    //             let zero = block
+                    //                 .append_operation(arith::constant(
+                    //                     &self.context,
+                    //                     IntegerAttribute::new(self.llvm_types.i64_type.clone(), 0).into(),
+                    //                     Location::unknown(&self.context),
+                    //                 ))
+                    //                 .result(0)
+                    //                 .unwrap()
+                    //                 .into();
+
+
+                    //             block.append_operation(llvm::get_element_ptr_dynamic(
+                    //                 &self.context,
+                    //                 attribute_ptr,
+                    //                 &[zero],
+                    //                 None,
+                    //                 self.llvm_types.i8_ptr_type,
+                    //                 Location::unknown(&self.context),
+                    //             ))
+                    //         }
+                    //         BaseType::Int => loaded_val,
+                    //         BaseType::StringType => todo!(),
+                    //         BaseType::Void => todo!(),
+                    //         BaseType::Undef(_) => todo!(),
+                    //     }
+                    //     None => todo!(),
+                    // };
+
+
+                    // // let loaded_ptr = block.append_operation(
+                    // //     // llvm::load(&self.context, *lvar_value, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
+                    // //     llvm::load(&self.context, *lvar_value, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
+                    // // );
+
+                    // let index = block
+                    //     .append_operation(arith::constant(
+                    //         &self.context,
+                    //         IntegerAttribute::new(self.llvm_types.i64_type.clone(), attribute_index).into(),
+                    //         Location::unknown(&self.context),
+                    //     ))
+                    //     .result(0)
+                    //     .unwrap()
+                    //     .into();
+
+                    // match &node.return_type {
+                    //     Some(rt) => match rt {
+                    //         BaseType::BytePtr => {
+                    //             let attribute_ptr = block.append_operation(llvm::get_element_ptr_dynamic(
+                    //                 &self.context,
+                    //                 loaded_ptr.result(0).unwrap().into(),
+                    //                 &[index],
+                    //                 None,
+                    //                 llvm::r#type::r#pointer(self.basetype_to_mlir_type(node.return_type.clone().unwrap()), 0),
+                    //                 Location::unknown(&self.context),
+                    //             )).result(0).unwrap().into();
+
+                    //             let zero = block
+                    //                 .append_operation(arith::constant(
+                    //                     &self.context,
+                    //                     IntegerAttribute::new(self.llvm_types.i64_type.clone(), 0).into(),
+                    //                     Location::unknown(&self.context),
+                    //                 ))
+                    //                 .result(0)
+                    //                 .unwrap()
+                    //                 .into();
+
+
+                    //             block.append_operation(llvm::get_element_ptr_dynamic(
+                    //                 &self.context,
+                    //                 attribute_ptr,
+                    //                 &[zero],
+                    //                 None,
+                    //                 self.llvm_types.i8_ptr_type,
+                    //                 Location::unknown(&self.context),
+                    //             ))
+
+                    //             // block.append_operation(
+                    //             //     llvm::load(&self.context, attribute_ptr, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
+                    //             // )
+                    //         },
+                    //         BaseType::Int => loaded_ptr,
+                    //         BaseType::StringType => todo!(),
+                    //         BaseType::Void => todo!(),
+                    //         BaseType::Undef(_) => todo!(),
+                    //     },
+                    //     None => todo!(),
+                    // }
+
+                    // // block.append_operation(llvm::extract_value(
+                    // //     &self.context,
+                    // //     *lvar_value,
+                    // //     attribute::DenseI64ArrayAttribute::new(&self.context, &[attribute_index.into()]),
+                    // //     self.basetype_to_mlir_type(node.return_type.clone().unwrap()),
+                    // //     Location::unknown(&self.context),
+                    // // ))
+                },
+                _ => todo!(),
+            };
+
+        Ok(value.result(0).unwrap().into())
+
+
+        // block.parent_operation()
+
+        // // node.return_type
+        // // println!("access node: {:#?}", node);
+
+        // // let value = block.append_operation(arith::constant(
+        // //     &self.context,
+        // //     IntegerAttribute::new(nb.value as i64, IntegerType::new(&self.context, 32).into()).into(),
+        // //     Location::unknown(&self.context),
+        // // )).result(0).unwrap().into();
+
+        // // Ok(value)
+
+        // let string_attr = StringAttribute::new(&self.context, &string.value);
+        // // let string_ref = StringRef::new(string.value.as_str());
+        // let string_type = MemRefType::new(IntegerType::new(&self.context, 8).into(), &[i64::MIN], None, None);
+        // let string_global = block.append_operation(memref::global(
+        //     &self.context,
+        //     "foo",
+        //     None,
+        //     string_type,
+        //     Some(string_attr.into()),
+        //     false,
+        //     None,
+        //     Location::unknown(&self.context),
+        // ));
+
+        // let buffer_ptr = block.append_operation(memref::alloc(
+        //     &self.context,
+        //     MemRefType::new(string_type.into(), &[], None, None),
+        //     &[],
+        //     &[],
+        //     None,
+        //     Location::unknown(&self.context),
+        // ));
+
+        // let get_string_gloal = block.append_operation(memref::get_global(&self.context, "foo", string_type, Location::unknown(&self.context)));
+
+
+        // block.append_operation(memref::store(
+        //     // string_global.result(0).unwrap().into(),
+        //     get_string_gloal.result(0).unwrap().into(),
+        //     buffer_ptr.result(0).unwrap().into(),
+        //     &[],
+        //     Location::unknown(self.context),
+        // ));
+
+        // let struct_fields = [
+        //     string_type.into(),
+        //     Type::index(&self.context).into(),
+        //     Type::index(&self.context).into(),
+        // ];
+        // let struct_type = llvm::r#type::r#struct(&self.context, &struct_fields, false);
+        // let struct_value = block.append_operation(memref::alloc(
+        //     &self.context,
+        //     MemRefType::new(struct_type, &[], None, None),
+        //     &[],
+        //     &[],
+        //     None,
+        //     Location::unknown(&self.context),
+        // )).result(0).unwrap().into();
+
+        // // block.append_operation(memref::store(
+        // //     buffer_value,
+        // //     ptr,
+        // //     &[],
+        // //     Location::unknown(self.context),
+        // // ));
+
+        // Ok(struct_value)
     }
 
     fn compile_send(&self, block: &'a Block<'ctx>, node: &parser::Send) -> Result<Value<'ctx, '_>, &'static str> {
@@ -716,12 +1132,37 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         todo!()
     }
 
-    fn compile_call(&self, block: &'a Block<'ctx>, call: &parser::Call) -> Result<Value<'ctx, '_>, &'static str> {
-        let void_type = llvm::r#type::void(&self.context);
+    fn compile_call(&self, block: &'a Block<'ctx>, call: &parser::Call, local_vars: &mut HashMap<String, Value<'ctx, 'a>>) -> Result<Value<'ctx, '_>, &'static str> {
         let location = Location::unknown(&self.context);
 
-        let i32_type = IntegerType::new(&self.context, 32).into();
-        let function_type = FunctionType::new(&self.context, &[i32_type], &[void_type]);
+        let mut inputs = vec![];
+        for arg in &call.args {
+            let arg_return_type =
+                match &arg {
+                    Node::Access(access_node) => self.basetype_to_mlir_type(access_node.return_type.clone().unwrap()),
+                    Node::SelfRef(selfref_node) => todo!(),
+                    Node::Binary(binary_node) => todo!(),
+                    Node::Call(call_node) => self.basetype_to_mlir_type(call_node.return_type.clone().unwrap()),
+                    Node::Send(send_node) => self.basetype_to_mlir_type(send_node.return_type.clone().unwrap()),
+                    Node::Int(int_node) => self.basetype_to_mlir_type(BaseType::Int),
+                    Node::InterpolableString(interpolablestring_node) => self.basetype_to_mlir_type(BaseType::StringType),
+                    Node::LocalVar(localvar_node) => todo!(),
+                    _ => return Err("Syntax Error: Invalid argument type")
+                };
+
+            inputs.push(arg_return_type);
+        }
+
+        let void_type = llvm::r#type::void(&self.context);
+
+        let result =
+            match &call.return_type {
+                Some(base_type) => self.basetype_to_mlir_type(base_type.clone()),
+                None => void_type,
+            };
+
+        // let i32_type = IntegerType::new(&self.context, 32).into();
+        let function_type = FunctionType::new(&self.context, &inputs, &[result]);
 
         let function = block.append_operation(func::constant(
             &self.context,
@@ -735,7 +1176,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let mut compiled_args = vec![];
 
         for arg in &call.args {
-            let value = self.compile_expr(block, &arg).unwrap();
+            let value = self.compile_expr(block, &arg, local_vars).unwrap();
             compiled_args.push(value);
         }
 
@@ -760,181 +1201,12 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             .into();
 
         Ok(value)
-        // Err("Wut")
-
-
-        // let location = Location::unknown(&self.context);
-
-
-        //         // let sum = block.append_operation(arith::addi(
-        //         //     block.argument(0).unwrap().into(),
-        //         //     block.argument(1).unwrap().into(),
-        //         //     location
-        //         // ));
-
-        //         let one = block.append_operation(arith::constant(
-        //             &self.context,
-        //             IntegerAttribute::new(1, Type::index(&self.context)).into(),
-        //             location,
-        //         ));
-
-        //         block.append_operation(func::r#return( &[], location));
-        //         // block.append_operation(func::r#return( &[block.argument(0).unwrap().into()], location));
-
-        //         // let operation = block.append_operation(
-        //         //     operation::OperationBuilder::new("func.return", Location::unknown(&context))
-        //         //         .build()
-        //         //         .unwrap(),
-        //         // );
-
-        // Ok(block)
-
-
-
-
-
-        // Node::Call(call) => match self.get_function(call.fn_name.as_str()) {
-        //     Some(fun) => {
-        //         let mut compiled_args = Vec::with_capacity(call.args.len());
-
-
-
-        //         // let mut arg_return_types = vec![];
-        //         // arg_return_types.reserve(call.args.len());
-
-        //         for arg in &call.args {
-        //             println!("{:#?}", "AAAAAAAAAAAARG");
-        //             println!("{:#?}", arg);
-
-        //             println!("{:#?}", call);
-
-        //             // match arg {
-        //             //     Node::Send(node) => {
-        //             //         match node.return_type.unwrap() {
-        //             //             BaseType::Int => todo!(),
-        //             //             BaseType::StringType => {
-        //             //                 arg_return_types.push(
-        //             //                     self.llvm_types.raw_array_ptr_type.ptr_type(AddressSpace::default())
-        //             //                 );
-        //             //             },
-        //             //             BaseType::Void => todo!(),
-        //             //             BaseType::Undef(undef) => {
-        //             //                 println!("NAMENAME: {:#?}", undef);
-
-        //             //                 arg_return_types.push(
-        //             //                     self.llvm_types.raw.ptr_type(AddressSpace::default())
-        //             //                 );
-        //             //             },
-        //             //         }
-        //             //     },
-        //             //     _ => BaseType::Void,
-        //             // };
-
-        //             compiled_args.push(self.compile_expr(&arg)?);
-        //         }
-
-        //         let mut i = 0;
-
-        //         let argsv: Vec<BasicMetadataValueEnum> = compiled_args
-        //             .iter()
-        //             .map(|val| match *val {
-        //                 Value::IntValue(float_value) => float_value.into(),
-        //                 // Value::ArrayPtrValue(string_ptr) => string_ptr.into(),
-        //                 Value::ArrayPtrValue(string_ptr) => {
-
-        //                     // stopped here, maybe an index to see if we need to cast
-        //                     // call.args[]
-
-        //                     println!("{:#?}", "INDEX:");
-        //                     println!("{:#?}", self.parser_index.fn_index);
-
-        //                     let fn_arg_types = self.parser_index.fn_index.get(fun.get_name().to_str().unwrap()).unwrap();
-
-        //                     let struct_type = match fn_arg_types[i] {
-        //                         BaseType::StringType => {
-        //                             // self.llvm_types.raw_array_ptr_type.ptr_type(AddressSpace::default())
-        //                             self.llvm_types.raw_array_ptr_type
-        //                         },
-        //                         BaseType::Undef(_) => {
-        //                             // self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default())
-        //                             self.llvm_types.raw_struct_ptr_type
-        //                         },
-        //                         _ => panic!("shouldnt reach here")
-        //                     };
-
-        //                     i += 1;
-
-        //                     // let struct_type = self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default());
-        //                     self.builder.build_bitcast(string_ptr, struct_type, "bitcasted_val").unwrap().into()
-
-        //                     // todo: pass other args
-
-        //                     // self.builder.build_call(class_fn, &[bitcasted_val.into()], "result")
-        //                     // self.builder.build_call(class_fn, &arg_return_types, "result")
-        //                 },
-        //                 Value::StructPtrValue(struct_ptr) => {
-        //                     let fn_arg_types = self.parser_index.fn_index.get(fun.get_name().to_str().unwrap()).unwrap();
-
-        //                     let struct_type = match fn_arg_types[i] {
-        //                         BaseType::StringType => {
-        //                             self.llvm_types.raw_array_ptr_type.ptr_type(AddressSpace::default())
-        //                         },
-        //                         BaseType::Undef(_) => {
-        //                             self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default())
-        //                         },
-        //                         _ => panic!("shouldnt reach here")
-        //                     };
-
-        //                     i += 1;
-
-        //                     // let struct_type = self.llvm_types.raw_struct_ptr_type.ptr_type(AddressSpace::default());
-        //                     self.builder.build_bitcast(struct_ptr.as_basic_value_enum(), struct_type, "bitcasted_val").unwrap().into()
-
-        //                     // todo: pass other args
-
-        //                     // self.builder.build_call(class_fn, &[bitcasted_val.into()], "result")
-        //                     // self.builder.build_call(class_fn, &arg_return_types, "result")
-
-        //                     // println!("{}", self.llvm_module.print_to_string().to_string());
-        //                     // println!("{:#?}", node);
-        //                     // todo!()},
-        //                 },
-        //                 Value::StructValue(struct_value) => {
-        //                     struct_value.into()
-        //                 },
-        //                 Value::VoidValue => todo!(),
-
-        //                 // _ => todo!(),
-        //             })
-        //             .collect();
-
-        //         match self
-        //             .builder
-        //             .build_call(fun, argsv.as_slice(), "tmp")
-        //             .unwrap()
-        //             .try_as_basic_value()
-        //             .left()
-        //         {
-        //             Some(value) => match value {
-        //                 inkwell::values::BasicValueEnum::PointerValue(value) => {
-        //                     Ok(Value::ArrayPtrValue(value))
-        //                 }
-        //                 inkwell::values::BasicValueEnum::IntValue(value) => {
-        //                     Ok(Value::IntValue(value))
-        //                 }
-        //                 _ => todo!(),
-        //             },
-        //             None => Ok(Value::VoidValue),
-        //         }
-        //     }
-        //     None => Err("Unknown function."),
-        // }
     }
 
     fn compile_int(&self, block: &'a Block<'ctx>, nb: &parser::Int) -> Result<Value<'ctx, '_>, &'static str> {
         let value = block.append_operation(arith::constant(
             &self.context,
-            IntegerAttribute::new(nb.value as i64, IntegerType::new(&self.context, 32).into()).into(),
+            IntegerAttribute::new(IntegerType::new(&self.context, 32).into(), nb.value as i64).into(),
             Location::unknown(&self.context),
         )).result(0).unwrap().into();
 
@@ -942,19 +1214,262 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     }
 
     fn compile_interpolable_string(&self, block: &'a Block<'ctx>, string: &parser::InterpolableString) -> Result<Value<'ctx, '_>, &'static str> {
+        // // let i64_type = IntegerType::new(&self.context, 64).into();
+        // let i8_type = IntegerType::new(&self.context, 8).into();
+        // let i8_ptr_type = llvm::r#type::r#pointer(i8_type, 0);
+        // // let memref_i8_type = MemRefType::new(i8_type, &[4], None, None);
+        // let i8_array_type = llvm::r#type::array(i8_type, 5);
+        // // let i8_array_type = Type::vector(&[string.value.len().try_into().unwrap()], i8_type);
+        // // let i8_array_memref_type = MemRefType::new(i8_array_type, &[], None, None);
+        // let i8_array_ptr_type = llvm::r#type::r#pointer(i8_array_type, 0);
+
+        let struct_fields = [
+            self.llvm_types.i8_ptr_type.into(),
+            self.llvm_types.i8_type.clone(),
+            self.llvm_types.i8_type.clone(),
+        ];
+        let struct_type = llvm::r#type::r#struct(&self.context, &struct_fields, false);
+        let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
+
+        let string_attr = StringAttribute::new(&self.context, &string.value);
+
+        // let buffer_const_op = block.append_operation(OperationBuilder::new("llvm.mlir.constant", Location::unknown(&self.context))
+        //     .add_results(&[i8_array_type])
+        //     .add_attributes(&[(
+        //         Identifier::new(&self.context, "value"),
+        //         string_attr.into()
+        //     )])
+        //     .build()
+        //     .unwrap()
+        // );
+
+        let i8_array_type = llvm::r#type::array(self.llvm_types.i8_type, string.value.len() as u32);
+
+        let region = Region::new();
+        self.mlir_module.body().append_operation(llvm::global(
+            &self.context,
+            StringAttribute::new(&self.context, "foo"),
+            Some(string_attr.into()),
+            i8_array_type,
+                region,
+                Location::unknown(&self.context)
+        ));
+
+        let region = Region::new();
+        let string_block = Block::new(&[]);
+
+        let addressof_op = string_block.append_operation(
+            llvm::addressof(&self.context, "foo", llvm::r#type::pointer(i8_array_type, 0), Location::unknown(&self.context))
+        ).result(0).unwrap().into();
+
+        // let zero = string_block
+        //     .append_operation(arith::constant(
+        //         &self.context,
+        //         IntegerAttribute::new(i64_type, 0).into(),
+        //         Location::unknown(&self.context),
+        //     ))
+        //     .result(0)
+        //     .unwrap()
+        //     .into();
+
+        let buffer_gep = string_block.append_operation(
+            llvm::get_element_ptr(&self.context, addressof_op, DenseI32ArrayAttribute::new(&self.context, &[0, 0]), self.llvm_types.i8_ptr_type, Location::unknown(&self.context)
+        )).result(0).unwrap().into();
+
+        let undef_struct = string_block.append_operation(
+            llvm::undef(struct_type, Location::unknown(&self.context))).result(0).unwrap().into();
+
+        let prev_result = string_block.append_operation(llvm::insert_value(
+            &self.context,
+            undef_struct,
+            DenseI64ArrayAttribute::new(&self.context, &[0]),
+            buffer_gep,
+            Location::unknown(&self.context),
+        ));
+
+        let length_const = string_block
+            .append_operation(arith::constant(
+                &self.context,
+                IntegerAttribute::new(self.llvm_types.i8_type, 5).into(),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        let max_length_const = string_block
+            .append_operation(arith::constant(
+                &self.context,
+                IntegerAttribute::new(self.llvm_types.i8_type, 5).into(),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        let prev_result = string_block.append_operation(llvm::insert_value(
+            &self.context,
+            prev_result.result(0).unwrap().into(),
+            DenseI64ArrayAttribute::new(&self.context, &[1]),
+            length_const,
+            Location::unknown(&self.context),
+        ));
+
+        let last_undef_op = string_block.append_operation(llvm::insert_value(
+            &self.context,
+            prev_result.result(0).unwrap().into(),
+            DenseI64ArrayAttribute::new(&self.context, &[2]),
+            max_length_const,
+            Location::unknown(&self.context),
+        ));
+
+        string_block.append_operation(llvm::r#return(Some(last_undef_op.result(0).unwrap().into()), Location::unknown(&self.context)));
+
+        region.append_block(string_block);
+
+
+        self.mlir_module.body().append_operation(llvm::global(
+            &self.context,
+            StringAttribute::new(&self.context, "foo2"),
+            None,
+            struct_type,
+                region,
+                Location::unknown(&self.context)
+        ));
+
+        let struct_addressof_op = block.append_operation(
+            llvm::addressof(&self.context, "foo2", struct_ptr_type, Location::unknown(&self.context))
+        ).result(0).unwrap().into();
+
+        // let struct_load = block.append_operation(llvm::load(
+        //     &self.context,
+        //     struct_addressof_op,
+        //     struct_type,
+        //     Location::unknown(&self.context),
+        //     Default::default(),
+        // )).result(0).unwrap().into();
+
+        return Ok(struct_addressof_op);
+    }
+
+    fn compile_binary(&self, block: &'a Block<'ctx>, binary: &parser::Binary, local_vars: &mut HashMap<String, Value<'ctx, 'a>>) -> Result<Value<'ctx, '_>, &'static str> {
         todo!()
     }
 
-    fn compile_binary(&self, block: &'a Block<'ctx>, binary: &parser::Binary) -> Result<Value<'ctx, '_>, &'static str> {
+    fn compile_local_var(&self, block: &'a Block<'ctx>, lvar: &parser::LocalVar, local_vars: &mut HashMap<String, Value<'ctx, 'a>>) -> Result<Value<'ctx, '_>, &'static str> {
         todo!()
     }
 
-    fn compile_local_var(&self, block: &'a Block<'ctx>, lvar: &parser::LocalVar) -> Result<Value<'ctx, '_>, &'static str> {
-        todo!()
-    }
+    fn compile_assign_local_var(&self, block: &'a Block<'ctx>, asgn_lvar: &parser::AssignLocalVar, local_vars: &mut HashMap<String, Value<'ctx, 'a>>) -> Result<Value<'ctx, '_>, &'static str> {
+        let return_val = match self.compile_expr(&block, &asgn_lvar.value, local_vars) {
+            Ok(ret_val) => ret_val,
+            Err(e) => return Err(e),
+        };
 
-    fn compile_assign_local_var(&self, block: &'a Block<'ctx>, asgn_lvar: &parser::AssignLocalVar) -> Result<Value<'ctx, '_>, &'static str> {
-        todo!()
+        let size = block
+            .append_operation(arith::constant(
+                &self.context,
+                IntegerAttribute::new(self.llvm_types.i64_type.clone(), 1).into(),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+
+        let ptr_type = r#type::pointer(return_val.r#type(), 0);
+        let ptr = block.append_operation(llvm::alloca(
+            &self.context,
+            size,
+            ptr_type,
+            Location::unknown(&self.context),
+            Default::default(),
+            // AllocaOptions::new().elem_type(Some(TypeAttribute::new(return_val.r#type()))),
+        )).result(0).unwrap().into();
+
+
+        block.append_operation(llvm::store(
+            &self.context,
+            return_val,
+            ptr,
+            Location::unknown(&self.context),
+            Default::default(),
+        ));
+
+        local_vars.insert(asgn_lvar.name.clone(), ptr);
+
+        Ok(ptr)
+
+        // self.variables.insert(
+        //     match &local.pat {
+        //         syn::Pat::Ident(identifier) => identifier.ident.to_string(),
+        //         _ => return Err(Error::NotSupported("non-identifier pattern")),
+        //     },
+        //     ptr,
+        // );
+
+
+        // let last_node = i == last_op_index - 1;
+        // if last_node {
+        //     if node.main_fn {
+        //         let success_int_value = block.append_operation(arith::constant(
+        //             &self.context,
+        //             IntegerAttribute::new(1 as i64, IntegerType::new(&self.context, 32).into()).into(),
+        //             Location::unknown(&self.context),
+        //         )).result(0).unwrap().into();
+
+        //         block.append_operation(func::r#return( &[success_int_value], Location::unknown(&self.context)));
+        //     } else {
+        //         block.append_operation(func::r#return( &[return_val], Location::unknown(&self.context)));
+        //     }
+        // }
+
+        //             let lvar_name = &asgn_lvar.name;
+        //             let initial_value = self.compile_expr(block, &asgn_lvar.value)?;
+        //             let (alloca, return_type) = match &initial_value {
+        //                 ReturnValue::IntValue(fv) => {
+        //                     let ret_type = self.llvm_types.int_type.clone();
+        //                     let alloca = self.create_entry_block_alloca(lvar_name, &ret_type);
+
+        //                     self.builder.build_store(alloca, *fv);
+
+        //                     (LLVMValue::IntType(*fv), ret_type)
+        //                 }
+        //                 ReturnValue::ArrayPtrValue(pv) => {
+        //                     let ret_type = self.llvm_types.array_ptr_type.clone();
+        //                     let alloca = self.create_entry_block_alloca(lvar_name, &ret_type);
+        //                     let loaded_val = self.builder.build_load(pv.get_type(), *pv, lvar_name).unwrap();
+
+        //                     self.builder.build_store(alloca, loaded_val);
+
+        //                     (LLVMValue::PointerValue(*pv), ret_type)
+        //                 }
+        //                 ReturnValue::StructPtrValue(pv) => {
+        //                     let ret_type = self.llvm_types.struct_ptr_type.clone();
+        //                     let alloca = self.create_entry_block_alloca(lvar_name, &ret_type);
+
+        //                     self.builder.build_store(alloca, *pv);
+
+        //                     (LLVMValue::PointerValue(*pv), ret_type)
+        //                 },
+        //                 ReturnValue::StructValue(sv) => {
+        //                     let ret_type = LLVMType::StructType(self.llvm_types.raw_array_ptr_type.clone());
+        //                     // let alloca = self.create_entry_block_alloca(lvar_name, &ret_type);
+
+        //                     // self.builder.build_store(alloca, *sv);
+
+        //                     (LLVMValue::StructValue(*sv), ret_type)
+        //                 },
+        //                 ReturnValue::VoidValue => todo!(),
+        //             };
+
+        //             let value_ref = LocalVarRef {
+        //                 alloca,
+        //                 return_type,
+        //             };
+        //             self.local_variables.insert(lvar_name.clone(), value_ref);
+
+        //             Ok(initial_value)
     }
 
     // fn compile_fn(&mut self, node: &parser::Def) -> Result<FunctionValue<'ctx>, &'static str> {
@@ -2018,4 +2533,14 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     //         // },
     //     }
     // }
+
+    fn basetype_to_mlir_type(&self, return_type: BaseType) -> Type<'ctx> {
+        match return_type {
+            BaseType::Int => IntegerType::new(&self.context, 64).into(),
+            BaseType::StringType => todo!(),
+            BaseType::Void => todo!(),
+            BaseType::Undef(_) => todo!(),
+            BaseType::BytePtr => self.llvm_types.i8_ptr_type.clone().into(),
+        }
+    }
 }

@@ -1,5 +1,13 @@
-def_e int_print(int Int)
+def_e print_int(int Int)
+def_e print_bytes(byte_ptr BytePtr)
+
+class Str
+   buffer BytePtr
+   length Int
+   max_length Int
+end
 
 def main
-   int_print(123)
+   some_str = "hello"
+   print_bytes(some_str.buffer)
 end
