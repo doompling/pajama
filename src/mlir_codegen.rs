@@ -127,10 +127,9 @@ pub fn print_int(int: i32) {
 }
 
 #[no_mangle]
-// pub fn print_bytes(bytes: *mut u8, len: i32) {
-pub fn print_bytes(bytes: *const u8) {
+pub fn print_bytes(bytes: *const u8, len: u64) {
     // println!("bytes {:#?}", bytes);
-    // println!("len {:#?}", len);
+    println!("len {:#?}", len);
 
     // if bytes.is_null() || len == 0 {
     //     println!("Invalid input: null pointer or zero length");
@@ -139,7 +138,7 @@ pub fn print_bytes(bytes: *const u8) {
 
     // Create a slice from the raw pointer and length
     // let slice = unsafe { std::slice::from_raw_parts_mut(bytes, len as usize) };
-    let slice = unsafe { std::slice::from_raw_parts(bytes, 5) };
+    let slice = unsafe { std::slice::from_raw_parts(bytes, len as usize) };
 
     // Print the bytes as characters (assumes text data)
     for byte in slice {
@@ -151,7 +150,7 @@ pub fn print_bytes(bytes: *const u8) {
 #[used]
 static EXTERNAL_FNS3: [fn(i32); 1] = [print_int];
 #[used]
-static EXTERNAL_FNS4: [fn(*const u8); 1] = [print_bytes];
+static EXTERNAL_FNS4: [fn(*const u8, u64); 1] = [print_bytes];
 
 // #[derive(Debug)]
 // pub enum ReturnValue<'a> {
@@ -254,13 +253,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let i8_ptr_type = llvm::r#type::r#pointer(i8_type, 0);
         let i8_array_type = llvm::r#type::array(i8_type, 5);
         let i8_array_ptr_type = llvm::r#type::r#pointer(i8_array_type, 0);
-        let i64_type = IntegerType::new(&context, 64).into();
+        let i64_type = IntegerType::new(&context, 64);
 
 
         let struct_fields = [
             i8_ptr_type.into(),
-            i8_type.clone(),
-            i8_type.clone(),
+            i64_type.into(),
+            i64_type.into(),
         ];
         let struct_type = llvm::r#type::r#struct(&context, &struct_fields, false);
         let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
@@ -272,7 +271,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             i8_array_ptr_type,
             struct_type,
             struct_ptr_type,
-            i64_type,
+            i64_type: i64_type.into(),
         };
 
 
@@ -855,15 +854,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                                         Location::unknown(&self.context),
                                     ));
 
-                                    let thing = gep.to_string_with_flags(
-                                        operation::OperationPrintingFlags::new()
-                                            .elide_large_elements_attributes(100)
-                                            .enable_debug_info(true, true)
-                                            .print_generic_operation_form()
-                                            .use_local_scope()
-                                    );
-                                    println!("debug: {:#?}", thing.unwrap());
-
                                     block.append_operation(
                                         // llvm::load(&self.context, *lvar_value, self.basetype_to_mlir_type(node.return_type.clone().unwrap()), Location::unknown(&self.context), Default::default())
                                         llvm::load(&self.context, gep.result(0).unwrap().into(), result_type, Location::unknown(&self.context), Default::default())
@@ -1206,7 +1196,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     fn compile_int(&self, block: &'a Block<'ctx>, nb: &parser::Int) -> Result<Value<'ctx, '_>, &'static str> {
         let value = block.append_operation(arith::constant(
             &self.context,
-            IntegerAttribute::new(IntegerType::new(&self.context, 32).into(), nb.value as i64).into(),
+            IntegerAttribute::new(IntegerType::new(&self.context, 64).into(), nb.value as i64).into(),
             Location::unknown(&self.context),
         )).result(0).unwrap().into();
 
@@ -1223,13 +1213,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         // // let i8_array_memref_type = MemRefType::new(i8_array_type, &[], None, None);
         // let i8_array_ptr_type = llvm::r#type::r#pointer(i8_array_type, 0);
 
-        let struct_fields = [
-            self.llvm_types.i8_ptr_type.into(),
-            self.llvm_types.i8_type.clone(),
-            self.llvm_types.i8_type.clone(),
-        ];
-        let struct_type = llvm::r#type::r#struct(&self.context, &struct_fields, false);
-        let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
+        // let struct_fields = [
+        //     self.llvm_types.i8_ptr_type.into(),
+        //     self.llvm_types.i8_type.clone(),
+        //     self.llvm_types.i8_type.clone(),
+        // ];
+        // let struct_type = llvm::r#type::r#struct(&self.context, &struct_fields, false);
+        // let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
 
         let string_attr = StringAttribute::new(&self.context, &string.value);
 
@@ -1277,7 +1267,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         )).result(0).unwrap().into();
 
         let undef_struct = string_block.append_operation(
-            llvm::undef(struct_type, Location::unknown(&self.context))).result(0).unwrap().into();
+            llvm::undef(self.llvm_types.struct_type, Location::unknown(&self.context))).result(0).unwrap().into();
 
         let prev_result = string_block.append_operation(llvm::insert_value(
             &self.context,
@@ -1287,10 +1277,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Location::unknown(&self.context),
         ));
 
+
+        let string_length = string.value.len() as i64;
+
         let length_const = string_block
             .append_operation(arith::constant(
                 &self.context,
-                IntegerAttribute::new(self.llvm_types.i8_type, 5).into(),
+                IntegerAttribute::new(self.llvm_types.i64_type, string_length).into(),
                 Location::unknown(&self.context),
             ))
             .result(0)
@@ -1300,7 +1293,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let max_length_const = string_block
             .append_operation(arith::constant(
                 &self.context,
-                IntegerAttribute::new(self.llvm_types.i8_type, 5).into(),
+                IntegerAttribute::new(self.llvm_types.i64_type, string_length).into(),
                 Location::unknown(&self.context),
             ))
             .result(0)
@@ -1332,13 +1325,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             &self.context,
             StringAttribute::new(&self.context, "foo2"),
             None,
-            struct_type,
+            self.llvm_types.struct_type,
                 region,
                 Location::unknown(&self.context)
         ));
 
         let struct_addressof_op = block.append_operation(
-            llvm::addressof(&self.context, "foo2", struct_ptr_type, Location::unknown(&self.context))
+            llvm::addressof(&self.context, "foo2", self.llvm_types.struct_ptr_type, Location::unknown(&self.context))
         ).result(0).unwrap().into();
 
         // let struct_load = block.append_operation(llvm::load(
