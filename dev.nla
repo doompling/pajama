@@ -1,5 +1,5 @@
 def_e print_int(int Int)
-def_e print_bytes(byte_ptr BytePtr)
+def_e print_bytes(byte_ptr BytePtr, int Int)
 
 class Str
    buffer BytePtr
@@ -8,6 +8,6 @@ class Str
 end
 
 def main
-   some_str = "hello"
-   print_bytes(some_str.buffer)
+   some_str = "lets goo!!"
+   print_bytes(some_str.buffer, some_str.length)
 end
