@@ -80,8 +80,13 @@ pub struct Compiler<'a, 'ctx> {
     pub llvm_types: LlvmTypes<'ctx>,
     pub parser_index: &'a ParserResultIndex,
     // pub class_ids: BTreeMap<String, u64>,
-    pub local_variables: HashMap<String, Value<'ctx, 'a>>,
     // pub fn_value_opt: Option<FunctionValue<'ctx>>,
+}
+
+#[derive(Debug)]
+pub struct Ctx<'ctx, 'a> {
+    pub lvars: HashMap<String, Value<'ctx, 'a>>,
+    pub global_var_counter: i32,
 }
 
 // #[derive(Debug)]
@@ -135,7 +140,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             mlir_module: &mlir_module,
             llvm_types,
             parser_index: &parser.index,
-            local_variables: HashMap::new(),
         };
 
         compiler.compile_ast();
@@ -377,7 +381,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         let block = Block::new(&inputs);
         let region = Region::new();
-        let mut local_vars: HashMap<String, Value<'ctx, '_>> = HashMap::new();
+        let mut ctx = Ctx {
+            lvars: HashMap::new(),
+            global_var_counter: 0,
+            // local_vars: HashMap<String, Value<'ctx, '_>> = HashMap::new(),
+        };
 
         if node.body.iter().len() == 0 {
             panic!("Empty body not supported")
@@ -386,13 +394,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         for (index, arg) in node.prototype.args.iter().enumerate() {
             let return_val = block.argument(index).unwrap().into();
             let ptr = self.append_alloca_store(return_val, &block);
-            local_vars.insert(arg.name.clone(), ptr);
+            ctx.lvars.insert(arg.name.clone(), ptr);
         }
 
         let last_op_index = node.body.len();
 
         for (i, body_node) in node.body.iter().enumerate() {
-            let return_val = match self.compile_expr(&block, body_node, &mut local_vars) {
+            let return_val = match self.compile_expr(&block, body_node, &mut ctx) {
                 Ok(ret_val) => ret_val,
                 Err(e) => return Err(e),
             };
@@ -451,19 +459,19 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         expr: &Node,
-        local_vars: &mut HashMap<String, Value<'ctx, 'a>>,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
         match *&expr {
-            Node::Access(node) => self.compile_attribute_access(block, node, local_vars),
+            Node::Access(node) => self.compile_attribute_access(block, node, ctx),
             Node::AssignLocalVar(asgn_lvar) => {
-                self.compile_assign_local_var(block, asgn_lvar, local_vars)
+                self.compile_assign_local_var(block, asgn_lvar, ctx)
             }
-            Node::Binary(binary) => self.compile_binary(block, binary, local_vars),
-            Node::Call(call) => self.compile_call(block, call, local_vars),
+            Node::Binary(binary) => self.compile_binary(block, binary, ctx),
+            Node::Call(call) => self.compile_call(block, call, ctx),
             Node::Int(nb) => self.compile_int(block, nb),
-            Node::InterpolableString(string) => self.compile_interpolable_string(block, string),
-            Node::LocalVar(lvar) => self.compile_local_var(block, lvar, local_vars),
-            Node::Ret(ret) => self.compile_return(block, ret, local_vars),
+            Node::InterpolableString(string) => self.compile_interpolable_string(block, string, ctx),
+            Node::LocalVar(lvar) => self.compile_local_var(block, lvar, ctx),
+            Node::Ret(ret) => self.compile_return(block, ret, ctx),
             Node::SelfRef(lvar) => self.compile_self_ref(block, lvar),
             Node::Send(node) => self.compile_send(block, node),
             Node::Attribute(_) => panic!("Syntax error"),
@@ -480,11 +488,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         node: &parser::Access,
-        local_vars: &mut HashMap<String, Value<'ctx, 'a>>,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
         let value = match &*node.receiver {
             Node::LocalVar(lvar) => {
-                let lvar_value = local_vars.get(&lvar.name).unwrap();
+                let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
                 let attribute_index = node.index;
 
                 match &lvar.return_type {
@@ -568,7 +576,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         call: &parser::Call,
-        local_vars: &mut HashMap<String, Value<'ctx, 'a>>,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
         let location = Location::unknown(&self.context);
 
@@ -618,7 +626,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let mut compiled_args = vec![];
 
         for arg in &call.args {
-            let value = self.compile_expr(block, &arg, local_vars).unwrap();
+            let value = self.compile_expr(block, &arg, ctx).unwrap();
             compiled_args.push(value.unwrap());
         }
 
@@ -670,14 +678,17 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         string: &parser::InterpolableString,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
         let string_attr = StringAttribute::new(&self.context, &string.value);
         let i8_array_type = llvm::r#type::array(self.llvm_types.i8_type, string.value.len() as u32);
 
         let region = Region::new();
+        let temp_name = ctx.global_var_counter.to_string();
+
         self.mlir_module.body().append_operation(llvm::global(
             &self.context,
-            StringAttribute::new(&self.context, "foo"),
+            StringAttribute::new(&self.context, temp_name.as_str()),
             Some(string_attr.into()),
             i8_array_type,
             region,
@@ -690,13 +701,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let addressof_op = string_block
             .append_operation(llvm::addressof(
                 &self.context,
-                "foo",
+                temp_name.as_str(),
                 llvm::r#type::pointer(i8_array_type, 0),
                 Location::unknown(&self.context),
             ))
             .result(0)
             .unwrap()
             .into();
+
+        ctx.global_var_counter += 1;
 
         let buffer_gep = string_block
             .append_operation(llvm::get_element_ptr(
@@ -772,9 +785,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         region.append_block(string_block);
 
+        let temp_name = ctx.global_var_counter.to_string();
+
         self.mlir_module.body().append_operation(llvm::global(
             &self.context,
-            StringAttribute::new(&self.context, "foo2"),
+            StringAttribute::new(&self.context, temp_name.as_str()),
             None,
             self.llvm_types.struct_type,
             region,
@@ -784,13 +799,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let struct_addressof_op = block
             .append_operation(llvm::addressof(
                 &self.context,
-                "foo2",
+                temp_name.as_str(),
                 self.llvm_types.struct_ptr_type,
                 Location::unknown(&self.context),
             ))
             .result(0)
             .unwrap()
             .into();
+
+        ctx.global_var_counter += 1;
 
         return Ok(Some(struct_addressof_op));
     }
@@ -799,7 +816,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         binary: &parser::Binary,
-        local_vars: &mut HashMap<String, Value<'ctx, 'a>>,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
         todo!()
     }
@@ -808,12 +825,12 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         lvar: &parser::LocalVar,
-        local_vars: &mut HashMap<String, Value<'ctx, 'a>>,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
         let loaded_val = block
             .append_operation(llvm::load(
                 &self.context,
-                *local_vars.get(&lvar.name).unwrap(),
+                *ctx.lvars.get(&lvar.name).unwrap(),
                 self.llvm_types.struct_ptr_type,
                 Location::unknown(&self.context),
                 Default::default(),
@@ -829,15 +846,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         asgn_lvar: &parser::AssignLocalVar,
-        local_vars: &mut HashMap<String, Value<'ctx, 'a>>,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
-        let return_val = match self.compile_expr(&block, &asgn_lvar.value, local_vars) {
+        let return_val = match self.compile_expr(&block, &asgn_lvar.value, ctx) {
             Ok(ret_val) => ret_val,
             Err(e) => return Err(e),
         };
 
         let ptr = self.append_alloca_store(return_val.unwrap(), block);
-        local_vars.insert(asgn_lvar.name.clone(), ptr);
+        ctx.lvars.insert(asgn_lvar.name.clone(), ptr);
         // local_vars.insert(asgn_lvar.name.clone(), return_val.unwrap());
 
         Ok(return_val)
@@ -887,9 +904,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         &self,
         block: &'a Block<'ctx>,
         ret: &parser::Ret,
-        local_vars: &mut HashMap<String, Value<'ctx, 'a>>,
+        ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
-        let return_val = match self.compile_expr(&block, &ret.value, local_vars) {
+        let return_val = match self.compile_expr(&block, &ret.value, ctx) {
             Ok(ret_val) => ret_val,
             Err(e) => return Err(e),
         };
