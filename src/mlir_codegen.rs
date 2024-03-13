@@ -900,7 +900,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     fn basetype_to_mlir_type(&self, return_type: &BaseType) -> Type<'ctx> {
         match return_type {
             BaseType::Int => IntegerType::new(&self.context, 64).into(),
-            BaseType::StringType => todo!(),
+            BaseType::StringType => self.llvm_types.struct_ptr_type,
             BaseType::Void => todo!(),
             BaseType::Undef(name) => match name.as_str() {
                 "Str" => self.llvm_types.struct_ptr_type,

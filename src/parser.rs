@@ -794,7 +794,8 @@ impl<'a> Parser<'a> {
                 if !ctx.parsing_returnable_loc {
                     return Err("Return can only be used at the root of a function.");
                 }
-                self.advance();
+                self.advance()?;
+                self.advance_optional_whitespace();
 
                 Ok(Node::Ret(Ret {
                     value: Box::new(self.parse_expr(ctx)?),
