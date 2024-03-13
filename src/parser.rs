@@ -106,23 +106,29 @@ pub struct SelfRef {
 }
 
 #[derive(Debug)]
+pub struct Ret {
+    pub value: Box<Node>,
+}
+
+#[derive(Debug)]
 pub enum Node {
     Access(Access),
-    Attribute(Attribute),
-    SelfRef(SelfRef),
     AssignLocalVar(AssignLocalVar),
+    Attribute(Attribute),
     Binary(Binary),
     Call(Call),
-    Send(Send),
+    Class(Class),
     Def(Def),
     DefE(DefE),
+    Impl(Impl),
     Int(Int),
     InterpolableString(InterpolableString),
-    Module(Module),
-    Impl(Impl),
-    Class(Class),
-    Trait(Trait),
     LocalVar(LocalVar),
+    Module(Module),
+    Ret(Ret),
+    SelfRef(SelfRef),
+    Send(Send),
+    Trait(Trait),
 }
 
 // impl Node {
@@ -201,6 +207,7 @@ pub struct ParserContext {
     pub body: Vec<Node>,
     pub prototype: Prototype,
     pub parsing_dot: bool,
+    pub parsing_returnable_loc: bool,
 }
 
 #[derive(Debug)]
@@ -476,6 +483,7 @@ impl<'a> Parser<'a> {
             body: vec![],
             prototype,
             parsing_dot: false,
+            parsing_returnable_loc: true,
         };
 
         loop {
@@ -483,6 +491,8 @@ impl<'a> Parser<'a> {
 
             match self.current()? {
                 Token::End => {
+                    ctx.parsing_returnable_loc = false;
+
                     if !trait_name.is_empty() && ctx.body.len() == 0 {
                         break;
                     }
@@ -492,7 +502,8 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     let expr = self.parse_expr(&ctx)?;
-                    ctx.body.push(expr)
+                    ctx.body.push(expr);
+                    ctx.parsing_returnable_loc = true
                 }
             }
         }
@@ -757,10 +768,11 @@ impl<'a> Parser<'a> {
     fn parse_primary(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
         let node = match self.curr() {
             Token::Ident(_, _) => self.parse_ident_expr(ctx),
-            Token::Number(_, _) => self.parse_nb_expr(),
-            Token::StringLiteral(_, _) => self.parse_string_expr(),
             Token::LParen => self.parse_paren_expr(ctx),
+            Token::Number(_, _) => self.parse_nb_expr(),
+            Token::Ret => self.parse_ret_expr(ctx),
             Token::SelfRef => self.parse_self_ref_expr(ctx),
+            Token::StringLiteral(_, _) => self.parse_string_expr(),
             _ => {
                 panic!("{:#?}", self.curr());
                 panic!("{:#?}", self);
@@ -773,6 +785,22 @@ impl<'a> Parser<'a> {
         match self.curr() {
             Token::Dot => self.parse_dot_expr(ctx, node),
             _ => node,
+        }
+    }
+
+    fn parse_ret_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+        match self.curr() {
+            Token::Ret => {
+                if !ctx.parsing_returnable_loc {
+                    return Err("Return can only be used at the root of a function.");
+                }
+                self.advance();
+
+                Ok(Node::Ret(Ret {
+                    value: Box::new(self.parse_expr(ctx)?),
+                }))
+            }
+            _ => Err("Expected Ret"),
         }
     }
 

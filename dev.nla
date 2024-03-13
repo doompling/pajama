@@ -7,7 +7,11 @@ class Str
    max_length Int
 end
 
+def print(str Str)
+   print_bytes(str.buffer, str.length)
+end
+
 def main
    some_str = "lets goo!!"
-   print_bytes(some_str.buffer, some_str.length)
+   print(some_str)
 end

@@ -94,10 +94,35 @@ fn run_type_inference(
             }
             Node::Call(call_node) => visit_call_node(&attribute_index, &method_index, call_node),
             Node::Send(send_node) => visit_send_node(&attribute_index, &method_index, send_node),
-            _ => {}
+            Node::Ret(ret_node) => visit_ret_node(&attribute_index, &method_index, ret_node),
+            Node::Attribute(_) => todo!(),
+            Node::Class(_) => todo!(),
+            Node::Def(_) => todo!(),
+            Node::DefE(_) => todo!(),
+            Node::Impl(_) => todo!(),
+            Node::Int(_) => todo!(),
+            Node::InterpolableString(_) => todo!(),
+            Node::LocalVar(_) => todo!(),
+            Node::Module(_) => todo!(),
+            Node::SelfRef(_) => todo!(),
+            Node::Trait(_) => todo!(),
         }),
         _ => {}
     });
+}
+
+fn visit_ret_node(
+    attribute_index: &HashMap<String, (i32, BaseType)>,
+    method_index: &HashMap<String, Option<BaseType>>,
+    ret_node: &mut crate::parser::Ret,
+) {
+    match ret_node.value.as_mut() {
+        Node::Access(access_node) => visit_access_node(attribute_index, access_node),
+        Node::Binary(node) => visit_binary_node(attribute_index, method_index, node),
+        Node::Call(node) => visit_call_node(attribute_index, method_index, node),
+        Node::Send(node) => visit_send_node(attribute_index, method_index, node),
+        _ => {}
+    }
 }
 
 fn visit_access_node(
@@ -105,22 +130,23 @@ fn visit_access_node(
     access_node: &mut crate::parser::Access,
 ) {
     let class_name = match access_node.receiver.as_mut() {
+        Node::LocalVar(lvar) => nilla_class_name(lvar.return_type.clone().unwrap()),
         Node::Access(_) => todo!(),
-        Node::Attribute(_) => todo!(),
-        Node::SelfRef(_) => todo!(),
         Node::AssignLocalVar(_) => todo!(),
+        Node::Attribute(_) => todo!(),
         Node::Binary(_) => todo!(),
         Node::Call(_) => todo!(),
-        Node::Send(_) => todo!(),
+        Node::Class(_) => todo!(),
         Node::Def(_) => todo!(),
         Node::DefE(_) => todo!(),
+        Node::Impl(_) => todo!(),
         Node::Int(_) => todo!(),
         Node::InterpolableString(_) => todo!(),
         Node::Module(_) => todo!(),
-        Node::Impl(_) => todo!(),
-        Node::Class(_) => todo!(),
+        Node::Ret(_) => todo!(),
+        Node::SelfRef(_) => todo!(),
+        Node::Send(_) => todo!(),
         Node::Trait(_) => todo!(),
-        Node::LocalVar(lvar) => nilla_class_name(lvar.return_type.clone().unwrap()),
     };
 
     let attribute_name = match access_node.message.as_mut() {

@@ -32,6 +32,7 @@ pub enum Token {
     StringLiteral(TokenPosition, String),
     Trait,
     Unary,
+    Ret,
 }
 
 pub struct Lexer<'a> {
@@ -257,10 +258,11 @@ impl Lexer<'_> {
                 match src_ident {
                     "binary" => Token::Binary,
                     "class" => Token::Class,
-                    "def" => Token::Def,
                     "def_e" => Token::DefE,
+                    "def" => Token::Def,
                     "end" => Token::End,
                     "impl" => Token::Impl,
+                    "ret" => Token::Ret,
                     "self" => Token::SelfRef,
                     "trait" => Token::Trait,
                     "unary" => Token::Unary,
