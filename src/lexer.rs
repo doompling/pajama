@@ -11,6 +11,7 @@ pub struct TokenPosition {
 pub enum Token {
     Arrow,
     Assign,
+    Attribute(TokenPosition, String),
     Binary,
     Class,
     Comma,
@@ -26,13 +27,13 @@ pub enum Token {
     NewLine(usize),
     Number(TokenPosition, u64),
     Op(char),
+    Ret,
     RParen,
     SelfRef,
     Space(usize),
     StringLiteral(TokenPosition, String),
     Trait,
     Unary,
-    Ret,
 }
 
 pub struct Lexer<'a> {
@@ -295,6 +296,37 @@ impl Lexer<'_> {
             '>' => Token::Op('>'),
 
             '=' => Token::Assign,
+
+            '@' => {
+                let mut token_pos = TokenPosition {
+                    line: self.line_pos,
+                    start_column: self.column_pos,
+                    end_column: self.column_pos,
+                };
+
+                loop {
+                    let ch = match self.chars.peek() {
+                        Some(ch) => *ch,
+                        None => break,
+                    };
+
+                    match ch {
+                        'a'..='z' | '_' => {}
+                        _ => break,
+                    }
+
+                    self.chars.next();
+
+                    self.column_pos += 1;
+                    pos += 1;
+                }
+
+                // skip the @
+                let attr_name = &src[start + 1..pos];
+                token_pos.end_column = self.column_pos;
+
+                Token::Attribute(token_pos, attr_name.to_string())
+            },
 
             _ => {
                 println!("NOT IMPL{:#?}", ch);

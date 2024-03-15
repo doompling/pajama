@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::{collections::HashMap, ops::{Deref, DerefMut}, hash::Hash};
 
 use melior::ir::attribute;
 
@@ -52,7 +52,7 @@ pub struct Int {
 }
 
 #[derive(Debug)]
-pub struct InterpolableString {
+pub struct StringLiteral {
     pub value: String,
 }
 
@@ -67,9 +67,8 @@ impl LocalVar {
         match &self.return_type {
             Some(rt) => match rt {
                 BaseType::Int => "Int",
-                BaseType::StringType => "Str",
                 BaseType::Void => "",
-                BaseType::Undef(class_name) => class_name.as_str(),
+                BaseType::Class(class_name) => class_name.as_str(),
                 BaseType::BytePtr => "BytePtr",
             },
             None => "",
@@ -79,7 +78,7 @@ impl LocalVar {
 
 #[derive(Debug)]
 pub struct Module {
-    pub body: Vec<Node>,
+    pub methods: Vec<Node>,
 }
 
 #[derive(Debug)]
@@ -122,7 +121,7 @@ pub enum Node {
     DefE(DefE),
     Impl(Impl),
     Int(Int),
-    InterpolableString(InterpolableString),
+    StringLiteral(StringLiteral),
     LocalVar(LocalVar),
     Module(Module),
     Ret(Ret),
@@ -142,9 +141,8 @@ pub enum Node {
 pub enum BaseType {
     BytePtr,
     Int,
-    StringType,
     Void,
-    Undef(String),
+    Class(String),
 }
 
 #[derive(Debug)]
@@ -158,9 +156,8 @@ impl Arg {
         match &self.return_type {
             BaseType::BytePtr => "BytePtr",
             BaseType::Int => "Int",
-            BaseType::StringType => "Str",
             BaseType::Void => "",
-            BaseType::Undef(class_name) => class_name.as_str(),
+            BaseType::Class(class_name) => class_name.as_str(),
         }
     }
 }
@@ -191,18 +188,25 @@ pub struct DefE {
 
 #[derive(Debug)]
 pub struct ParserResult {
-    pub ast: Node,
+    pub module: Node,
     pub index: ParserResultIndex,
 }
 
 #[derive(Debug)]
 pub struct ParserResultIndex {
     pub trait_index: HashMap<String, Vec<Class>>,
-    pub fn_index: HashMap<String, Vec<BaseType>>,
+    pub class_index: HashMap<String, Class>,
+}
+
+
+#[derive(Debug)]
+pub struct ParserModuleCtx {
+    pub class_name: String,
+    pub self_node: Option<Node>,
 }
 
 #[derive(Debug)]
-pub struct ParserContext {
+pub struct ParserFunctionCtx {
     pub class_name: String,
     pub body: Vec<Node>,
     pub prototype: Prototype,
@@ -219,30 +223,56 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: Vec<Token>, op_precedence: &mut HashMap<char, i32>) -> Parser {
-        Parser {
+    // pub fn new(tokens: Vec<Token>, op_precedence: &mut HashMap<char, i32>) -> Parser {
+    //     Parser {
+    //         tokens,
+    //         op_precedence,
+    //         pos: 0,
+    //         index: ParserResultIndex {
+    //             trait_index: HashMap::new(),
+    //             class_index: HashMap::new(),
+    //         },
+    //     }
+    // }
+
+    pub fn start_parse(tokens: Vec<Token>, op_precedence: &mut HashMap<char, i32>) -> ParserResult {
+        let mut parser = Parser {
             tokens,
             op_precedence,
             pos: 0,
             index: ParserResultIndex {
                 trait_index: HashMap::new(),
-                fn_index: HashMap::new(),
+                class_index: HashMap::new(),
             },
+        };
+
+        let module = parser.parse().unwrap();
+
+        ParserResult {
+            module,
+            index: parser.index
         }
     }
-    pub fn parse(&mut self) -> Result<ParserResult, &'static str> {
-        let mut body = vec![];
+
+    // pub fn parse(&mut self) -> Result<ParserResult, &'static str> {
+    pub fn parse(&mut self) -> Result<Node, &'static str> {
+        let mut methods = vec![];
+        let mut mctx = ParserModuleCtx {
+            self_node: None,
+            class_name: "".to_string(),
+        };
 
         loop {
             self.advance_optional_whitespace();
             if self.at_end() {
+                mctx.self_node = None;
                 break;
             }
 
             let results = match self.current()? {
-                Token::Class => self.parse_class(),
-                Token::Trait => self.parse_trait(),
-                Token::Def => self.parse_def("".to_string(), "".to_string(), "".to_string()),
+                Token::Class => self.parse_class(&mut mctx),
+                Token::Trait => self.parse_trait(&mut mctx),
+                Token::Def => self.parse_def(&mut mctx, "".to_string(), "".to_string(), "".to_string()),
                 Token::DefE => self.parse_def_e(),
                 _ => {
                     println!("{:#?}", self.curr());
@@ -251,21 +281,19 @@ impl<'a> Parser<'a> {
             };
 
             for result in results? {
-                body.push(result);
+                methods.push(result);
             }
         }
 
-        Ok(ParserResult {
-            ast: Node::Module(Module { body }),
-            index: ParserResultIndex {
-                // trait_index: self.index.trait_index
-                trait_index: HashMap::new(),
-                fn_index: HashMap::new(),
-            },
-        })
+        Ok(Node::Module(Module { methods }))
+
+        // Ok(ParserResult {
+        //     module: Node::Module(Module { methods }),
+        //     index: self.index
+        // })
     }
 
-    fn parse_class(&mut self) -> Result<Vec<Node>, &'static str> {
+    fn parse_class(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
         // Advance past the keyword
         self.pos += 1;
 
@@ -293,7 +321,7 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             match self.current()? {
-                Token::Ident(_attr_pos, attr_name) => {
+                Token::Attribute(_attr_pos, attr_name) => {
                     self.advance();
                     self.advance_optional_whitespace();
 
@@ -302,10 +330,9 @@ impl<'a> Parser<'a> {
                             self.advance();
 
                             let return_type = match type_name.as_str() {
-                                "Str" => BaseType::StringType,
                                 "Int" => BaseType::Int,
                                 "BytePtr" => BaseType::BytePtr,
-                                _ => BaseType::Undef(type_name),
+                                _ => BaseType::Class(type_name),
                             };
 
                             attributes.push(Node::Attribute(Attribute {
@@ -322,19 +349,25 @@ impl<'a> Parser<'a> {
             };
         }
 
-        let mut functions = vec![];
-
-        functions.push(Node::Class(Class {
+        let class_node = Class {
             name: class_name.clone(),
             attributes,
+        };
+
+        self.index.class_index.insert(class_name.clone(), class_node);
+
+        mctx.self_node = Some(Node::SelfRef(SelfRef {
+            return_type: BaseType::Class(mctx.class_name.clone()),
         }));
+
+        let mut functions = vec![];
 
         loop {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(class_name.clone(), "".to_string(), "".to_string()),
-                Token::Impl => self.parse_impl(class_name.clone()),
+                Token::Def => self.parse_def(mctx, class_name.clone(), "".to_string(), "".to_string()),
+                Token::Impl => self.parse_impl(mctx, class_name.clone()),
                 Token::End => {
                     self.advance();
                     break;
@@ -347,10 +380,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        mctx.self_node = None;
+
         Ok(functions)
     }
 
-    fn parse_trait(&mut self) -> Result<Vec<Node>, &'static str> {
+    fn parse_trait(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
         let mut functions = vec![];
 
         // Advance past the keyword
@@ -377,7 +412,7 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def("".to_string(), "".to_string(), name.clone()),
+                Token::Def => self.parse_def(mctx, "".to_string(), "".to_string(), name.clone()),
                 Token::End => {
                     self.advance();
                     break;
@@ -396,7 +431,7 @@ impl<'a> Parser<'a> {
         Ok(functions)
     }
 
-    fn parse_impl(&mut self, class_name: String) -> Result<Vec<Node>, &'static str> {
+    fn parse_impl(&mut self, mctx: &mut ParserModuleCtx, class_name: String) -> Result<Vec<Node>, &'static str> {
         // Advance past the keyword
         self.pos += 1;
 
@@ -447,7 +482,7 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(class_name.clone(), impl_name.clone(), "".to_string()),
+                Token::Def => self.parse_def(mctx, class_name.clone(), impl_name.clone(), "".to_string()),
                 Token::End => {
                     self.advance();
                     break;
@@ -467,6 +502,7 @@ impl<'a> Parser<'a> {
 
     fn parse_def(
         &mut self,
+        mctx: &mut ParserModuleCtx,
         class_name: String,
         impl_name: String,
         trait_name: String,
@@ -478,8 +514,8 @@ impl<'a> Parser<'a> {
 
         self.advance_optional_whitespace();
 
-        let mut ctx = ParserContext {
-            class_name,
+        let mut ctx = ParserFunctionCtx {
+            class_name: mctx.class_name.clone(),
             body: vec![],
             prototype,
             parsing_dot: false,
@@ -501,7 +537,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 _ => {
-                    let expr = self.parse_expr(&ctx)?;
+                    let expr = self.parse_expr(mctx, &ctx)?;
                     ctx.body.push(expr);
                     ctx.parsing_returnable_loc = true
                 }
@@ -517,36 +553,35 @@ impl<'a> Parser<'a> {
             trait_name,
         };
 
-        let mut arg_return_types = vec![];
-
-        let fn_name = if !def_node.class_name.is_empty() {
-            if !def_node.impl_name.is_empty() {
-                arg_return_types.push(BaseType::Undef(def_node.impl_name.clone()));
-                format!(
-                    "{}:{}:{}",
-                    &def_node.class_name, &def_node.impl_name, &def_node.prototype.name
-                )
-            } else {
-                if def_node.class_name == "Str" {
-                    arg_return_types.push(BaseType::StringType)
-                } else {
-                    arg_return_types.push(BaseType::Undef(def_node.impl_name.clone()));
-                }
-                format!("{}:{}", &def_node.class_name, &def_node.prototype.name)
-            }
-        } else if !def_node.trait_name.is_empty() {
-            arg_return_types.push(BaseType::Undef(def_node.trait_name.clone()));
-            format!("{}:{}", &def_node.trait_name, &def_node.prototype.name)
-        } else {
-            def_node.prototype.name.clone()
-        };
-
-        for arg in &def_node.prototype.args {
-            arg_return_types.push(arg.return_type.clone());
-        }
-        self.index.fn_index.insert(fn_name, arg_return_types);
-
         Ok(vec![Node::Def(def_node)])
+
+        // let mut arg_return_types = vec![];
+        // let fn_name = if !def_node.class_name.is_empty() {
+        //     if !def_node.impl_name.is_empty() {
+        //         arg_return_types.push(BaseType::Class(def_node.impl_name.clone()));
+        //         format!(
+        //             "{}:{}:{}",
+        //             &def_node.class_name, &def_node.impl_name, &def_node.prototype.name
+        //         )
+        //     } else {
+        //         if def_node.class_name == "Str" {
+        //             arg_return_types.push(BaseType::Class("Str".to_string()))
+        //         } else {
+        //             arg_return_types.push(BaseType::Class(def_node.impl_name.clone()));
+        //         }
+        //         format!("{}:{}", &def_node.class_name, &def_node.prototype.name)
+        //     }
+        // } else if !def_node.trait_name.is_empty() {
+        //     arg_return_types.push(BaseType::Class(def_node.trait_name.clone()));
+        //     format!("{}:{}", &def_node.trait_name, &def_node.prototype.name)
+        // } else {
+        //     def_node.prototype.name.clone()
+        // };
+
+        // for arg in &def_node.prototype.args {
+        //     arg_return_types.push(arg.return_type.clone());
+        // }
+        // self.index.fn_index.insert(fn_name, arg_return_types);
     }
 
     fn parse_def_e(&mut self) -> Result<Vec<Node>, &'static str> {
@@ -559,14 +594,14 @@ impl<'a> Parser<'a> {
 
         let def_e_node = DefE { prototype };
 
-        let mut arg_return_types = vec![];
+        // let mut arg_return_types = vec![];
 
-        let fn_name = def_e_node.prototype.name.clone();
+        // let fn_name = def_e_node.prototype.name.clone();
 
-        for arg in &def_e_node.prototype.args {
-            arg_return_types.push(arg.return_type.clone());
-        }
-        self.index.fn_index.insert(fn_name, arg_return_types);
+        // for arg in &def_e_node.prototype.args {
+        //     arg_return_types.push(arg.return_type.clone());
+        // }
+        // self.index.fn_index.insert(fn_name, arg_return_types);
 
         Ok(vec![Node::DefE(def_e_node)])
     }
@@ -647,10 +682,9 @@ impl<'a> Parser<'a> {
             };
 
             let return_type = match type_name.as_str() {
-                "Str" => BaseType::StringType,
                 "Int" => BaseType::Int,
                 "BytePtr" => BaseType::BytePtr,
-                _ => BaseType::Undef(type_name),
+                _ => BaseType::Class(type_name),
             };
 
             args.push(Arg {
@@ -715,7 +749,7 @@ impl<'a> Parser<'a> {
             Token::Const(pos, name) => match name.as_ref() {
                 "Str" => {
                     self.advance();
-                    Ok(Some(BaseType::StringType))
+                    Ok(Some(BaseType::Class("Str".to_string())))
                 }
                 "Int" => {
                     self.advance();
@@ -727,31 +761,31 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     self.advance();
-                    Ok(Some(BaseType::Undef(name)))
+                    Ok(Some(BaseType::Class(name)))
                 }
             },
             _ => Err("Expected a return type after an arrow"),
         }
     }
 
-    fn parse_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
-        match self.parse_unary_expr(ctx) {
+    fn parse_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+        match self.parse_unary_expr(mctx, ctx) {
             Ok(left) => {
                 self.advance_optional_whitespace();
-                self.parse_binary_expr(ctx, 0, left)
+                self.parse_binary_expr(mctx, ctx, 0, left)
             }
             err => err,
         }
     }
 
     /// Parses an unary expression.
-    fn parse_unary_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+    fn parse_unary_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
         let op = match self.current()? {
             Token::Op(ch) => {
                 self.advance()?;
                 ch
             }
-            _ => return self.parse_primary(ctx),
+            _ => return self.parse_primary(mctx, ctx),
         };
 
         let mut name = String::from("unary");
@@ -760,18 +794,19 @@ impl<'a> Parser<'a> {
 
         Ok(Node::Call(Call {
             fn_name: name,
-            args: vec![self.parse_unary_expr(ctx)?],
+            args: vec![self.parse_unary_expr(mctx, ctx)?],
             return_type: None,
         }))
     }
 
-    fn parse_primary(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+    fn parse_primary(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
         let node = match self.curr() {
-            Token::Ident(_, _) => self.parse_ident_expr(ctx),
-            Token::LParen => self.parse_paren_expr(ctx),
+            Token::Attribute(_, _) => self.parse_attribute_expr(mctx, ctx),
+            Token::Ident(_, _) => self.parse_ident_expr(mctx, ctx),
+            Token::LParen => self.parse_paren_expr(mctx, ctx),
             Token::Number(_, _) => self.parse_nb_expr(),
-            Token::Ret => self.parse_ret_expr(ctx),
-            Token::SelfRef => self.parse_self_ref_expr(ctx),
+            Token::Ret => self.parse_ret_expr(mctx, ctx),
+            Token::SelfRef => self.parse_self_ref_expr(mctx, ctx),
             Token::StringLiteral(_, _) => self.parse_string_expr(),
             _ => {
                 panic!("{:#?}", self.curr());
@@ -783,12 +818,34 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
 
         match self.curr() {
-            Token::Dot => self.parse_dot_expr(ctx, node),
+            Token::Dot => self.parse_dot_expr(mctx, ctx, node),
             _ => node,
         }
     }
 
-    fn parse_ret_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+    fn parse_attribute_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+        match self.curr() {
+            Token::Attribute(pos, name) => {
+                self.advance();
+                self.advance_optional_whitespace();
+
+                let receiver = Box::new(Node::SelfRef(SelfRef {
+                    return_type: BaseType::Class(mctx.class_name.clone()),
+                }));
+
+                let message = Box::new(Node::Attribute(Attribute {
+                    name,
+                    index: 0,
+                    return_type: BaseType::Class("".to_string()),
+                }));
+
+                Ok(Node::Access(Access { receiver, message, index: todo!(), return_type: todo!() }))
+            }
+            _ => Err("Expected SelfRef"),
+        }
+    }
+
+    fn parse_ret_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
         match self.curr() {
             Token::Ret => {
                 if !ctx.parsing_returnable_loc {
@@ -798,20 +855,20 @@ impl<'a> Parser<'a> {
                 self.advance_optional_whitespace();
 
                 Ok(Node::Ret(Ret {
-                    value: Box::new(self.parse_expr(ctx)?),
+                    value: Box::new(self.parse_expr(mctx, ctx)?),
                 }))
             }
             _ => Err("Expected Ret"),
         }
     }
 
-    fn parse_self_ref_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+    fn parse_self_ref_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
         match self.curr() {
             Token::SelfRef => {
                 self.advance();
 
                 Ok(Node::SelfRef(SelfRef {
-                    return_type: BaseType::Undef(ctx.class_name.clone()),
+                    return_type: BaseType::Class(ctx.class_name.clone()),
                 }))
             }
             _ => Err("Expected SelfRef"),
@@ -819,7 +876,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an expression that starts with an identifier (either a variable or a function call).
-    fn parse_ident_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+    fn parse_ident_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
         let ident_name = match self.curr() {
             Token::Ident(pos, id) => {
                 self.advance();
@@ -850,7 +907,7 @@ impl<'a> Parser<'a> {
                 loop {
                     self.advance_optional_whitespace();
 
-                    args.push(self.parse_expr(ctx)?);
+                    args.push(self.parse_expr(mctx, ctx)?);
 
                     self.advance_optional_whitespace();
 
@@ -883,7 +940,7 @@ impl<'a> Parser<'a> {
 
                         Ok(Node::AssignLocalVar(AssignLocalVar {
                             name: ident_name,
-                            value: Box::new(self.parse_expr(ctx)?),
+                            value: Box::new(self.parse_expr(mctx, ctx)?),
                         }))
                     }
                     _ => {
@@ -898,14 +955,14 @@ impl<'a> Parser<'a> {
                                 Node::AssignLocalVar(asgnLvar) => {
                                     let return_type_name = match asgnLvar.value.as_ref() {
                                             Node::Int(_) => "Int",
-                                            Node::InterpolableString(_) => "Str",
+                                            Node::StringLiteral(_) => "Str",
                                             Node::LocalVar(val) => val.nilla_class_name(),
                                             _ => return Err("Local variable assignment was given an unsupprted node")
                                         };
 
                                     Ok(Node::LocalVar(LocalVar {
                                         name: ident_name,
-                                        return_type: Some(BaseType::Undef(
+                                        return_type: Some(BaseType::Class(
                                             return_type_name.to_string(),
                                         )),
                                     }))
@@ -922,7 +979,7 @@ impl<'a> Parser<'a> {
                                 match arg_assignment {
                                     Some(arg) => Ok(Node::LocalVar(LocalVar {
                                         name: ident_name,
-                                        return_type: Some(BaseType::Undef(
+                                        return_type: Some(BaseType::Class(
                                             arg.nilla_class_name().to_string(),
                                         )),
                                     })),
@@ -938,7 +995,8 @@ impl<'a> Parser<'a> {
 
     fn parse_dot_expr(
         &mut self,
-        ctx: &ParserContext,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
         receiver: Result<Node, &'static str>,
     ) -> Result<Node, &'static str> {
         let receiver = match receiver {
@@ -949,20 +1007,20 @@ impl<'a> Parser<'a> {
         self.advance();
 
         let node = match self.peek()? {
-            Token::LParen => match self.parse_dot_send_expr(ctx) {
+            Token::LParen => match self.parse_dot_send_expr(mctx, ctx) {
                 Ok(node) => Ok(Node::Send(Send {
                     receiver: Box::new(receiver),
                     message: Box::new(node),
-                    return_type: Some(BaseType::Undef("".to_string())),
+                    return_type: Some(BaseType::Class("".to_string())),
                 })),
                 Err(err) => return Err(err),
             },
-            _ => match self.parse_dot_attribute_expr(ctx) {
+            _ => match self.parse_dot_attribute_expr(mctx, ctx) {
                 Ok(node) => Ok(Node::Access(Access {
                     receiver: Box::new(receiver),
                     message: Box::new(node),
                     index: 0,
-                    return_type: Some(BaseType::Undef("".to_string())),
+                    return_type: Some(BaseType::Class("".to_string())),
                 })),
                 Err(err) => return Err(err),
             },
@@ -972,23 +1030,23 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
 
         match self.curr() {
-            Token::Dot => self.parse_dot_expr(ctx, node),
+            Token::Dot => self.parse_dot_expr(mctx, ctx, node),
             _ => node,
         }
     }
 
-    fn parse_dot_send_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
-        self.parse_ident_expr(ctx)
+    fn parse_dot_send_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+        self.parse_ident_expr(mctx, ctx)
     }
 
-    fn parse_dot_attribute_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+    fn parse_dot_attribute_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
         match self.current()? {
             Token::Ident(_pos, ident_name) => {
                 self.advance()?;
                 Ok(Node::Attribute(Attribute {
                     name: ident_name,
                     index: 0,
-                    return_type: BaseType::Undef("".to_string()),
+                    return_type: BaseType::Class("".to_string()),
                 }))
             }
             _ => Err("Expected Identifier for attribute access"),
@@ -1011,7 +1069,7 @@ impl<'a> Parser<'a> {
         match self.curr() {
             Token::StringLiteral(pos, string) => {
                 self.advance();
-                Ok(Node::InterpolableString(InterpolableString {
+                Ok(Node::StringLiteral(StringLiteral {
                     value: string,
                 }))
             }
@@ -1020,7 +1078,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an expression enclosed in parenthesis.
-    fn parse_paren_expr(&mut self, ctx: &ParserContext) -> Result<Node, &'static str> {
+    fn parse_paren_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
         match self.current()? {
             Token::LParen => (),
             _ => return Err("Expected '(' character at start of parenthesized expression."),
@@ -1029,7 +1087,7 @@ impl<'a> Parser<'a> {
         self.advance_optional_whitespace();
         self.advance()?;
 
-        let expr = self.parse_expr(ctx)?;
+        let expr = self.parse_expr(mctx, ctx)?;
 
         self.advance_optional_whitespace();
 
@@ -1044,7 +1102,8 @@ impl<'a> Parser<'a> {
     /// Parses a binary expression, given its left-hand expression.
     fn parse_binary_expr(
         &mut self,
-        ctx: &ParserContext,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
         prec: i32,
         mut left: Node,
     ) -> Result<Node, &'static str> {
@@ -1068,13 +1127,13 @@ impl<'a> Parser<'a> {
             self.advance()?;
             self.advance_optional_whitespace();
 
-            let mut right = self.parse_unary_expr(ctx)?;
+            let mut right = self.parse_unary_expr(mctx, ctx)?;
             let next_prec = self.get_tok_precedence();
 
             self.advance_optional_whitespace();
 
             if curr_prec < next_prec {
-                right = self.parse_binary_expr(ctx, curr_prec + 1, right)?;
+                right = self.parse_binary_expr(mctx, ctx, curr_prec + 1, right)?;
             }
 
             left = Node::Binary(Binary {

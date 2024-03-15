@@ -69,6 +69,7 @@ pub struct LlvmTypes<'ctx> {
     pub i64_type: Type<'ctx>,
     pub struct_type: Type<'ctx>,
     pub struct_ptr_type: Type<'ctx>,
+    pub ptr_type: Type<'ctx>,
 }
 
 /// Defines the `Expr` compiler.
@@ -78,7 +79,8 @@ pub struct Compiler<'a, 'ctx> {
     pub context: &'ctx Context,
     pub mlir_module: &'a Module<'ctx>,
     pub llvm_types: LlvmTypes<'ctx>,
-    pub parser_index: &'a ParserResultIndex,
+    class_type_index: HashMap<String, Type<'ctx>>,
+    // pub parser_index: &'a ParserResultIndex,
     // pub class_ids: BTreeMap<String, u64>,
     // pub fn_value_opt: Option<FunctionValue<'ctx>>,
 }
@@ -96,7 +98,7 @@ pub struct Ctx<'ctx, 'a> {
 // }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
-    pub fn compile(parser_result: &ParserResult, parser: &Parser) {
+    pub fn compile(parser_result: &ParserResult) {
         let registry = DialectRegistry::new();
         register_all_dialects(&registry);
 
@@ -120,6 +122,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let struct_fields = [i8_ptr_type.into(), i64_type.into(), i64_type.into()];
         let struct_type = llvm::r#type::r#struct(&context, &struct_fields, false);
         let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
+        let ptr_type = llvm::r#type::opaque_pointer(&context);
 
         let llvm_types = LlvmTypes {
             i8_type,
@@ -129,17 +132,40 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             struct_type,
             struct_ptr_type,
             i64_type: i64_type.into(),
+            ptr_type,
         };
 
         let location = Location::unknown(&context);
         let mut mlir_module = Module::new(location);
+
+        let mut class_type_index = HashMap::new();
+
+        for (_, class) in &parser_result.index.class_index {
+            let mut struct_fields = vec![];
+
+            for attribute in &class.attributes {
+                if let Node::Attribute(attribute) = attribute {
+                    struct_fields.push(match attribute.return_type {
+                        BaseType::BytePtr => i8_ptr_type,
+                        BaseType::Int => i64_type.into(),
+                        BaseType::Void => todo!(),
+                        BaseType::Class(_) => ptr_type,
+                    });
+
+                }
+            };
+
+            let struct_type = llvm::r#type::r#struct(&context, &struct_fields, false);
+
+            class_type_index.insert(class.name.clone(), struct_type);
+        }
 
         let mut compiler = Compiler {
             parser_result: &parser_result,
             context: &context,
             mlir_module: &mlir_module,
             llvm_types,
-            parser_index: &parser.index,
+            class_type_index,
         };
 
         compiler.compile_ast();
@@ -200,7 +226,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     }
 
     fn compile_ast(&mut self) {
-        match &self.parser_result.ast {
+        match &self.parser_result.module {
             Node::Module(module) => {
                 self.compile_module(module);
             }
@@ -211,10 +237,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     }
 
     fn compile_module(&mut self, module: &parser::Module) {
-        for node in module.body.iter() {
+        for node in module.methods.iter() {
             match &node {
-                Node::Class(class) => self.compile_class(class),
-                Node::Def(def) => self.compile_fn(def),
+                Node::Def(def) => self.compile_def(def),
                 Node::DefE(def_e) => self.compile_external_fn(def_e),
                 Node::Ret(ret) => todo!(),
                 Node::Access(_) => todo!(),
@@ -224,12 +249,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 Node::Call(_) => todo!(),
                 Node::Impl(_) => todo!(),
                 Node::Int(_) => todo!(),
-                Node::InterpolableString(_) => todo!(),
+                Node::StringLiteral(_) => todo!(),
                 Node::LocalVar(_) => todo!(),
                 Node::Module(_) => todo!(),
                 Node::SelfRef(_) => todo!(),
                 Node::Send(_) => todo!(),
                 Node::Trait(_) => todo!(),
+                Node::Class(class) => panic!("Classes are not directly compiled"),
             }
         }
     }
@@ -251,19 +277,27 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         // :D
     }
 
-    fn compile_fn(&mut self, node: &parser::Def) {
+    fn compile_def(&mut self, node: &parser::Def) {
         let name = StringAttribute::new(&self.context, &node.prototype.name);
 
         let mut inputs = vec![];
 
+        if !node.class_name.is_empty() {
+            let struct_type = self.class_type_index.get(&node.class_name).unwrap();
+            inputs.push(llvm::r#type::r#pointer(*struct_type, 0));
+        }
+
         for arg in &node.prototype.args {
-            match arg.return_type {
+            match &arg.return_type {
                 parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 64).into()),
-                parser::BaseType::StringType => {
-                    inputs.push(self.llvm_types.struct_ptr_type.clone().into())
-                }
+                // parser::BaseType::StringType => {
+                //     inputs.push(self.llvm_types.struct_ptr_type.clone().into())
+                // }
                 parser::BaseType::Void => todo!(),
-                parser::BaseType::Undef(_) => todo!(),
+                parser::BaseType::Class(class_name) => {
+                    let struct_type = self.class_type_index.get(class_name).unwrap();
+                    inputs.push(llvm::r#type::r#pointer(*struct_type, 0));
+                },
                 parser::BaseType::BytePtr => {
                     inputs.push(self.llvm_types.i8_ptr_type.clone().into())
                 }
@@ -319,9 +353,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         for arg in &node.prototype.args {
             match arg.return_type {
                 parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 64).into()),
-                parser::BaseType::StringType => todo!(),
                 parser::BaseType::Void => todo!(),
-                parser::BaseType::Undef(_) => todo!(),
+                parser::BaseType::Class(_) => todo!(),
                 parser::BaseType::BytePtr => {
                     inputs.push(self.llvm_types.i8_ptr_type.clone().into())
                 }
@@ -360,18 +393,26 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     fn compile_fn_body(&mut self, node: &parser::Def) -> Result<Region<'ctx>, &'static str> {
         let mut inputs = vec![];
 
+        if !node.class_name.is_empty() {
+            let struct_type = self.class_type_index.get(&node.class_name).unwrap();
+            inputs.push((llvm::r#type::r#pointer(*struct_type, 0), Location::unknown(&self.context)));
+        }
+
         for arg in &node.prototype.args {
-            match arg.return_type {
+            match &arg.return_type {
                 parser::BaseType::Int => inputs.push((
                     IntegerType::new(&self.context, 64).into(),
                     Location::unknown(&self.context),
                 )),
-                parser::BaseType::StringType => inputs.push((
-                    self.llvm_types.struct_ptr_type.clone().into(),
-                    Location::unknown(&self.context),
-                )),
+                // parser::BaseType::StringType => inputs.push((
+                //     self.llvm_types.struct_ptr_type.clone().into(),
+                //     Location::unknown(&self.context),
+                // )),
                 parser::BaseType::Void => todo!(),
-                parser::BaseType::Undef(_) => todo!(),
+                parser::BaseType::Class(name) => {
+                    let struct_type = self.class_type_index.get(name).unwrap();
+                    inputs.push((llvm::r#type::r#pointer(*struct_type, 0), Location::unknown(&self.context)));
+                },
                 parser::BaseType::BytePtr => inputs.push((
                     self.llvm_types.i8_ptr_type.clone().into(),
                     Location::unknown(&self.context),
@@ -391,7 +432,25 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             panic!("Empty body not supported")
         }
 
+        if !node.class_name.is_empty() {
+            let return_val = block.argument(0).unwrap().into();
+            let ptr = self.append_alloca_store(return_val, &block);
+            ctx.lvars.insert("self".to_string(), ptr);
+        }
+
         for (index, arg) in node.prototype.args.iter().enumerate() {
+            let index =
+                if !node.class_name.is_empty() {
+                    if index + 1 > node.prototype.args.len() {
+                        index
+                    } else {
+                        index + 1
+                    }
+                } else {
+                    index
+                };
+
+
             let return_val = block.argument(index).unwrap().into();
             let ptr = self.append_alloca_store(return_val, &block);
             ctx.lvars.insert(arg.name.clone(), ptr);
@@ -469,7 +528,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::Binary(binary) => self.compile_binary(block, binary, ctx),
             Node::Call(call) => self.compile_call(block, call, ctx),
             Node::Int(nb) => self.compile_int(block, nb),
-            Node::InterpolableString(string) => self.compile_interpolable_string(block, string, ctx),
+            Node::StringLiteral(string) => self.compile_string_literal(block, string, ctx),
             Node::LocalVar(lvar) => self.compile_local_var(block, lvar, ctx),
             Node::Ret(ret) => self.compile_return(block, ret, ctx),
             Node::SelfRef(lvar) => self.compile_self_ref(block, lvar),
@@ -487,69 +546,129 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     fn compile_attribute_access(
         &self,
         block: &'a Block<'ctx>,
-        node: &parser::Access,
+        access: &parser::Access,
         ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
-        let value = match &*node.receiver {
+        let value = match &*access.receiver {
             Node::LocalVar(lvar) => {
                 let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
-                let attribute_index = node.index;
+                let attribute_index = access.index;
 
                 match &lvar.return_type {
                     Some(rt) => match rt {
                         BaseType::BytePtr => todo!(),
                         BaseType::Int => todo!(),
-                        BaseType::StringType => todo!(),
                         BaseType::Void => todo!(),
-                        BaseType::Undef(name) => match name.as_str() {
-                            "Str" => {
-                                let result_type = match &node.return_type {
-                                    Some(rt) => match rt {
-                                        BaseType::BytePtr => self.llvm_types.i8_ptr_type,
-                                        BaseType::Int => self.llvm_types.i64_type,
-                                        BaseType::StringType => todo!(),
-                                        BaseType::Void => todo!(),
-                                        BaseType::Undef(_) => todo!(),
+                        BaseType::Class(lvar_type_name) => {
+                            // Load the Lvar
+                            let struct_type = self.class_type_index.get(lvar_type_name).unwrap();
+                            let struct_ptr_type = llvm::r#type::r#pointer(*struct_type, 0);
+                            let loaded_val = block.append_operation(llvm::load(
+                                &self.context,
+                                *lvar_value,
+                                struct_ptr_type,
+                                Location::unknown(&self.context),
+                                Default::default(),
+                            ));
+
+                            // Load the attribute access
+                            let result_type = match &access.return_type {
+                                Some(rt) => match rt {
+                                    BaseType::BytePtr => self.llvm_types.i8_ptr_type,
+                                    BaseType::Int => self.llvm_types.i64_type,
+                                    BaseType::Void => todo!(),
+                                    BaseType::Class(attribute_type_name) => {
+                                        let struct_type = self.class_type_index.get(attribute_type_name).unwrap();
+                                        llvm::r#type::r#pointer(*struct_type, 0)
                                     },
-                                    None => todo!(),
-                                };
+                                },
+                                None => todo!(),
+                            };
 
-                                let loaded_val = block.append_operation(llvm::load(
+                            let gep = block.append_operation(llvm::get_element_ptr(
+                                &self.context,
+                                loaded_val.result(0).unwrap().into(),
+                                DenseI32ArrayAttribute::new(
                                     &self.context,
-                                    *lvar_value,
-                                    self.llvm_types.struct_ptr_type,
-                                    Location::unknown(&self.context),
-                                    Default::default(),
-                                ));
+                                    &[0, attribute_index],
+                                ),
+                                // integer_type,
+                                llvm::r#type::r#pointer(result_type, 0),
+                                Location::unknown(&self.context),
+                            ));
 
-                                let gep = block.append_operation(llvm::get_element_ptr(
-                                    &self.context,
-                                    loaded_val.result(0).unwrap().into(),
-                                    DenseI32ArrayAttribute::new(
-                                        &self.context,
-                                        &[0, attribute_index],
-                                    ),
-                                    // integer_type,
-                                    llvm::r#type::r#pointer(result_type, 0),
-                                    Location::unknown(&self.context),
-                                ));
+                            let load_op = block.append_operation(llvm::load(
+                                &self.context,
+                                gep.result(0).unwrap().into(),
+                                result_type,
+                                Location::unknown(&self.context),
+                                Default::default(),
+                            ));
 
-                                let load_op = block.append_operation(llvm::load(
-                                    &self.context,
-                                    gep.result(0).unwrap().into(),
-                                    result_type,
-                                    Location::unknown(&self.context),
-                                    Default::default(),
-                                ));
-
-                                load_op
-                            }
-                            _ => todo!(),
+                            load_op
                         },
                     },
                     None => todo!(),
                 }
             }
+            Node::SelfRef(self_ref) => {
+                let lvar_value = ctx.lvars.get("self").unwrap();
+                let attribute_index = access.index;
+
+                match &self_ref.return_type {
+                    BaseType::BytePtr => todo!(),
+                    BaseType::Int => todo!(),
+                    BaseType::Void => todo!(),
+                    BaseType::Class(self_type_name) => {
+                        // Load the Lvar
+                        let struct_type = self.class_type_index.get(self_type_name).unwrap();
+                        let struct_ptr_type = llvm::r#type::r#pointer(*struct_type, 0);
+                        let loaded_val = block.append_operation(llvm::load(
+                            &self.context,
+                            *lvar_value,
+                            struct_ptr_type,
+                            Location::unknown(&self.context),
+                            Default::default(),
+                        ));
+
+                        // Load the attribute access
+                        let result_type = match &access.return_type {
+                            Some(rt) => match rt {
+                                BaseType::BytePtr => self.llvm_types.i8_ptr_type,
+                                BaseType::Int => self.llvm_types.i64_type,
+                                BaseType::Void => todo!(),
+                                BaseType::Class(attribute_type_name) => {
+                                    let struct_type = self.class_type_index.get(attribute_type_name).unwrap();
+                                    llvm::r#type::r#pointer(*struct_type, 0)
+                                },
+                            },
+                            None => todo!(),
+                        };
+
+                        let gep = block.append_operation(llvm::get_element_ptr(
+                            &self.context,
+                            loaded_val.result(0).unwrap().into(),
+                            DenseI32ArrayAttribute::new(
+                                &self.context,
+                                &[0, attribute_index],
+                            ),
+                            // integer_type,
+                            llvm::r#type::r#pointer(result_type, 0),
+                            Location::unknown(&self.context),
+                        ));
+
+                        let load_op = block.append_operation(llvm::load(
+                            &self.context,
+                            gep.result(0).unwrap().into(),
+                            result_type,
+                            Location::unknown(&self.context),
+                            Default::default(),
+                        ));
+
+                        load_op
+                    },
+                }
+            },
             _ => todo!(),
         };
 
@@ -595,8 +714,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     self.basetype_to_mlir_type(&send_node.return_type.as_ref().unwrap())
                 }
                 Node::Int(int_node) => self.basetype_to_mlir_type(&BaseType::Int),
-                Node::InterpolableString(interpolablestring_node) => {
-                    self.basetype_to_mlir_type(&BaseType::StringType)
+                Node::StringLiteral(interpolablestring_node) => {
+                    self.basetype_to_mlir_type(&BaseType::Class("Str".to_string()))
                 }
                 Node::LocalVar(localvar_node) => {
                     self.basetype_to_mlir_type(&localvar_node.return_type.as_ref().unwrap())
@@ -674,10 +793,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(Some(value))
     }
 
-    fn compile_interpolable_string(
+    fn compile_string_literal(
         &self,
         block: &'a Block<'ctx>,
-        string: &parser::InterpolableString,
+        string: &parser::StringLiteral,
         ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
         let string_attr = StringAttribute::new(&self.context, &string.value);
@@ -917,11 +1036,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     fn basetype_to_mlir_type(&self, return_type: &BaseType) -> Type<'ctx> {
         match return_type {
             BaseType::Int => IntegerType::new(&self.context, 64).into(),
-            BaseType::StringType => self.llvm_types.struct_ptr_type,
             BaseType::Void => todo!(),
-            BaseType::Undef(name) => match name.as_str() {
-                "Str" => self.llvm_types.struct_ptr_type,
-                _ => todo!(),
+            BaseType::Class(name) => {
+                let struct_type = self.class_type_index.get(name).unwrap();
+                llvm::r#type::r#pointer(*struct_type, 0)
             },
             BaseType::BytePtr => self.llvm_types.i8_ptr_type.clone().into(),
         }

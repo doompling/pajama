@@ -16,20 +16,15 @@ impl NillaCompiler {
         let tokens = lexer.tokenize();
 
         let mut precedence_map = NillaCompiler::build_op_precedence_map();
-        let mut binding = Parser::new(tokens, &mut precedence_map);
+        // let mut parser = Parser::new(tokens, &mut precedence_map);
+        // let mut parser_result = parser.parse().unwrap();
+        let mut parser_result = Parser::start_parse(tokens, &mut precedence_map);
 
-        let mut nodes = binding.parse().unwrap();
+        SemanticAnalyzer::run(&mut parser_result);
 
-        // println!("{:#?}", nodes);
+        println!("{:#?}", parser_result);
 
-        let semantics = SemanticAnalyzer::run(&mut nodes);
-
-        println!("{:#?}", nodes);
-
-        Compiler::compile(&nodes, &binding);
-
-        // Compiler::compile(&semantics.parser_result);
-        // Compiler::compile(nodes.unwrap());
+        Compiler::compile(&parser_result);
     }
 
     fn build_op_precedence_map() -> HashMap<char, i32> {

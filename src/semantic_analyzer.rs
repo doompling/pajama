@@ -1,6 +1,6 @@
 use std::{collections::HashMap, hash::Hash, ops::Deref};
 
-use crate::parser::{BaseType, Def, Node, Parser, ParserResult};
+use crate::parser::{BaseType, Def, Node, Parser, ParserResult, self};
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
@@ -12,20 +12,18 @@ pub struct SemanticAnalyzer {
 pub struct Diagnostics {}
 
 impl SemanticAnalyzer {
-    pub fn run(nodes: &mut ParserResult) -> SemanticAnalyzer {
-        Self::transform_ast(nodes)
+    pub fn run(result: &mut ParserResult) -> SemanticAnalyzer {
+        Self::transform_ast(result)
     }
 
-    pub fn transform_ast(nodes: &mut ParserResult) -> SemanticAnalyzer {
+    pub fn transform_ast(result: &mut ParserResult) -> SemanticAnalyzer {
         let mut attribute_index = HashMap::new();
         let mut method_index = HashMap::new();
 
-        match &mut nodes.ast {
+        match &mut result.module {
             Node::Module(module) => {
-                // todo: right now `module.body` is a flat list. It should
-                // probably be split out so functions and classes are separate
-                // so classes can always be parsed first.
-                populate_indicies(module, &mut attribute_index, &mut method_index);
+                populate_class_index(&result.index.class_index, &mut attribute_index);
+                populate_method_index(module, &mut method_index);
                 run_type_inference(module, method_index, attribute_index);
             }
             _ => todo!(),
@@ -37,22 +35,27 @@ impl SemanticAnalyzer {
     }
 }
 
-fn populate_indicies(
-    module: &mut crate::parser::Module,
+fn populate_class_index(
+    class_index: &HashMap<String, parser::Class>,
     attribute_index: &mut HashMap<String, (i32, BaseType)>,
+) {
+    class_index.values().for_each(|class| {
+        for attribute_node in &class.attributes {
+            if let Node::Attribute(attribute) = attribute_node {
+                attribute_index.insert(
+                    format!("{}.{}", class.name, attribute.name),
+                    (attribute.index, attribute.return_type.clone()),
+                );
+            }
+        };
+    });
+}
+
+fn populate_method_index(
+    module: &mut crate::parser::Module,
     method_index: &mut HashMap<String, Option<BaseType>>,
 ) {
-    module.body.iter_mut().for_each(|node| match node {
-        Node::Class(class_node) => {
-            for attribute_node in &class_node.attributes {
-                if let Node::Attribute(attribute) = attribute_node {
-                    attribute_index.insert(
-                        format!("{}.{}", class_node.name, attribute.name),
-                        (attribute.index, attribute.return_type.clone()),
-                    );
-                }
-            }
-        }
+    module.methods.iter_mut().for_each(|node| match node {
         Node::Def(def_node) => {
             method_index.insert(
                 def_node.prototype.name.clone(),
@@ -74,7 +77,7 @@ fn run_type_inference(
     mut method_index: HashMap<String, Option<BaseType>>,
     mut attribute_index: HashMap<String, (i32, BaseType)>,
 ) {
-    module.body.iter_mut().for_each(|node| match node {
+    module.methods.iter_mut().for_each(|node| match node {
         Node::Def(def_node) => def_node.body.iter_mut().for_each(|node| match node {
             Node::Access(access_node) => visit_access_node(&attribute_index, access_node),
             Node::AssignLocalVar(assignlocalvar_node) => match assignlocalvar_node.value.as_mut() {
@@ -101,7 +104,7 @@ fn run_type_inference(
             Node::DefE(_) => todo!(),
             Node::Impl(_) => todo!(),
             Node::Int(_) => todo!(),
-            Node::InterpolableString(_) => todo!(),
+            Node::StringLiteral(_) => todo!(),
             Node::LocalVar(_) => todo!(),
             Node::Module(_) => todo!(),
             Node::SelfRef(_) => todo!(),
@@ -130,7 +133,7 @@ fn visit_access_node(
     access_node: &mut crate::parser::Access,
 ) {
     let class_name = match access_node.receiver.as_mut() {
-        Node::LocalVar(lvar) => nilla_class_name(lvar.return_type.clone().unwrap()),
+        Node::LocalVar(lvar) => nilla_class_name(lvar.return_type.as_ref().unwrap()),
         Node::Access(_) => todo!(),
         Node::AssignLocalVar(_) => todo!(),
         Node::Attribute(_) => todo!(),
@@ -141,10 +144,10 @@ fn visit_access_node(
         Node::DefE(_) => todo!(),
         Node::Impl(_) => todo!(),
         Node::Int(_) => todo!(),
-        Node::InterpolableString(_) => todo!(),
+        Node::StringLiteral(_) => todo!(),
         Node::Module(_) => todo!(),
         Node::Ret(_) => todo!(),
-        Node::SelfRef(_) => todo!(),
+        Node::SelfRef(self_ref) => nilla_class_name(&self_ref.return_type),
         Node::Send(_) => todo!(),
         Node::Trait(_) => todo!(),
     };
@@ -155,6 +158,10 @@ fn visit_access_node(
     };
 
     let attr_key = format!("{}.{}", class_name, attribute_name);
+
+    println!("attr_key: {:#?}", attr_key);
+    println!("attribute_index: {:#?}", attribute_index);
+
     let (index, return_type) = attribute_index.get(&attr_key).unwrap();
 
     access_node.index = *index;
@@ -207,7 +214,7 @@ fn visit_send_node(
     send_node: &mut crate::parser::Send,
 ) {
     if let Some(rt) = &send_node.return_type {
-        if rt == &BaseType::Undef("".to_string()) {
+        if rt == &BaseType::Class("".to_string()) {
             let message_name = match send_node.message.as_ref() {
                 Node::Call(node) => &node.fn_name,
                 _ => "",
@@ -223,12 +230,11 @@ fn visit_send_node(
     }
 }
 
-pub fn nilla_class_name(base_type: BaseType) -> String {
+pub fn nilla_class_name(base_type: &BaseType) -> String {
     match base_type {
         BaseType::BytePtr => "BytePtr".to_string(),
         BaseType::Int => "Int".to_string(),
-        BaseType::StringType => "Str".to_string(),
         BaseType::Void => "".to_string(),
-        BaseType::Undef(class_name) => class_name.clone(),
+        BaseType::Class(class_name) => class_name.clone(),
     }
 }
