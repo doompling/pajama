@@ -1,4 +1,8 @@
-use std::{collections::HashMap, ops::{Deref, DerefMut}, hash::Hash};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    ops::{Deref, DerefMut},
+};
 
 use melior::ir::attribute;
 
@@ -198,7 +202,6 @@ pub struct ParserResultIndex {
     pub class_index: HashMap<String, Class>,
 }
 
-
 #[derive(Debug)]
 pub struct ParserModuleCtx {
     pub class_name: String,
@@ -250,7 +253,7 @@ impl<'a> Parser<'a> {
 
         ParserResult {
             module,
-            index: parser.index
+            index: parser.index,
         }
     }
 
@@ -272,7 +275,9 @@ impl<'a> Parser<'a> {
             let results = match self.current()? {
                 Token::Class => self.parse_class(&mut mctx),
                 Token::Trait => self.parse_trait(&mut mctx),
-                Token::Def => self.parse_def(&mut mctx, "".to_string(), "".to_string(), "".to_string()),
+                Token::Def => {
+                    self.parse_def(&mut mctx, "".to_string(), "".to_string(), "".to_string())
+                }
                 Token::DefE => self.parse_def_e(),
                 _ => {
                     println!("{:#?}", self.curr());
@@ -354,8 +359,11 @@ impl<'a> Parser<'a> {
             attributes,
         };
 
-        self.index.class_index.insert(class_name.clone(), class_node);
+        self.index
+            .class_index
+            .insert(class_name.clone(), class_node);
 
+        mctx.class_name = class_name.clone();
         mctx.self_node = Some(Node::SelfRef(SelfRef {
             return_type: BaseType::Class(mctx.class_name.clone()),
         }));
@@ -366,7 +374,9 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(mctx, class_name.clone(), "".to_string(), "".to_string()),
+                Token::Def => {
+                    self.parse_def(mctx, class_name.clone(), "".to_string(), "".to_string())
+                }
                 Token::Impl => self.parse_impl(mctx, class_name.clone()),
                 Token::End => {
                     self.advance();
@@ -380,6 +390,7 @@ impl<'a> Parser<'a> {
             }
         }
 
+        mctx.class_name = "".to_string();
         mctx.self_node = None;
 
         Ok(functions)
@@ -431,7 +442,11 @@ impl<'a> Parser<'a> {
         Ok(functions)
     }
 
-    fn parse_impl(&mut self, mctx: &mut ParserModuleCtx, class_name: String) -> Result<Vec<Node>, &'static str> {
+    fn parse_impl(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        class_name: String,
+    ) -> Result<Vec<Node>, &'static str> {
         // Advance past the keyword
         self.pos += 1;
 
@@ -482,7 +497,9 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(mctx, class_name.clone(), impl_name.clone(), "".to_string()),
+                Token::Def => {
+                    self.parse_def(mctx, class_name.clone(), impl_name.clone(), "".to_string())
+                }
                 Token::End => {
                     self.advance();
                     break;
@@ -768,7 +785,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         match self.parse_unary_expr(mctx, ctx) {
             Ok(left) => {
                 self.advance_optional_whitespace();
@@ -779,7 +800,11 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an unary expression.
-    fn parse_unary_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_unary_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         let op = match self.current()? {
             Token::Op(ch) => {
                 self.advance()?;
@@ -799,7 +824,13 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_primary(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_primary(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
+        println!("{:#?}", self.curr());
+
         let node = match self.curr() {
             Token::Attribute(_, _) => self.parse_attribute_expr(mctx, ctx),
             Token::Ident(_, _) => self.parse_ident_expr(mctx, ctx),
@@ -823,7 +854,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_attribute_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_attribute_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         match self.curr() {
             Token::Attribute(pos, name) => {
                 self.advance();
@@ -839,13 +874,22 @@ impl<'a> Parser<'a> {
                     return_type: BaseType::Class("".to_string()),
                 }));
 
-                Ok(Node::Access(Access { receiver, message, index: todo!(), return_type: todo!() }))
+                Ok(Node::Access(Access {
+                    receiver,
+                    message,
+                    index: 0,
+                    return_type: None,
+                }))
             }
             _ => Err("Expected SelfRef"),
         }
     }
 
-    fn parse_ret_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_ret_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         match self.curr() {
             Token::Ret => {
                 if !ctx.parsing_returnable_loc {
@@ -862,7 +906,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_self_ref_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_self_ref_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         match self.curr() {
             Token::SelfRef => {
                 self.advance();
@@ -876,7 +924,11 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses an expression that starts with an identifier (either a variable or a function call).
-    fn parse_ident_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_ident_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         let ident_name = match self.curr() {
             Token::Ident(pos, id) => {
                 self.advance();
@@ -1011,7 +1063,7 @@ impl<'a> Parser<'a> {
                 Ok(node) => Ok(Node::Send(Send {
                     receiver: Box::new(receiver),
                     message: Box::new(node),
-                    return_type: Some(BaseType::Class("".to_string())),
+                    return_type: None,
                 })),
                 Err(err) => return Err(err),
             },
@@ -1020,11 +1072,11 @@ impl<'a> Parser<'a> {
                     receiver: Box::new(receiver),
                     message: Box::new(node),
                     index: 0,
-                    return_type: Some(BaseType::Class("".to_string())),
+                    return_type: None,
                 })),
                 Err(err) => return Err(err),
             },
-            _ => return Err("Expected attribute or method call"),
+            // _ => return Err("Expected attribute or method call"),
         };
 
         self.advance_optional_whitespace();
@@ -1035,11 +1087,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_dot_send_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_dot_send_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         self.parse_ident_expr(mctx, ctx)
     }
 
-    fn parse_dot_attribute_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_dot_attribute_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         match self.current()? {
             Token::Ident(_pos, ident_name) => {
                 self.advance()?;
@@ -1069,16 +1129,18 @@ impl<'a> Parser<'a> {
         match self.curr() {
             Token::StringLiteral(pos, string) => {
                 self.advance();
-                Ok(Node::StringLiteral(StringLiteral {
-                    value: string,
-                }))
+                Ok(Node::StringLiteral(StringLiteral { value: string }))
             }
             _ => Err("Expected string literal."),
         }
     }
 
     /// Parses an expression enclosed in parenthesis.
-    fn parse_paren_expr(&mut self, mctx: &mut ParserModuleCtx, ctx: &ParserFunctionCtx) -> Result<Node, &'static str> {
+    fn parse_paren_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
         match self.current()? {
             Token::LParen => (),
             _ => return Err("Expected '(' character at start of parenthesized expression."),

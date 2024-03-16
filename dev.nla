@@ -2,16 +2,21 @@ def_e print_int(int Int)
 def_e print_bytes(byte_ptr BytePtr, int Int)
 
 class Str
-   buffer BytePtr
-   length Int
-   max_length Int
-end
+   @buffer BytePtr
+   @length Int
+   @max_length Int
 
-def print(str Str)
-   print_bytes(str.buffer, str.length)
+   def print(other_str Str)
+      other_str.print_2()
+   end
+
+   def print_2
+      print_bytes(@buffer, @length)
+   end
 end
 
 def main
-   some_str = "lets goo!!"
-   print(some_str)
+   a_string = "yarp"
+   other_string = "bruh"
+   a_string.print(other_string)
 end

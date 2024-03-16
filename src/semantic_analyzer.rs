@@ -1,6 +1,6 @@
 use std::{collections::HashMap, hash::Hash, ops::Deref};
 
-use crate::parser::{BaseType, Def, Node, Parser, ParserResult, self};
+use crate::parser::{self, BaseType, Def, Node, Parser, ParserResult};
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
@@ -47,7 +47,7 @@ fn populate_class_index(
                     (attribute.index, attribute.return_type.clone()),
                 );
             }
-        };
+        }
     });
 }
 
@@ -132,6 +132,8 @@ fn visit_access_node(
     attribute_index: &HashMap<String, (i32, BaseType)>,
     access_node: &mut crate::parser::Access,
 ) {
+    println!("{:#?}", access_node);
+
     let class_name = match access_node.receiver.as_mut() {
         Node::LocalVar(lvar) => nilla_class_name(lvar.return_type.as_ref().unwrap()),
         Node::Access(_) => todo!(),
@@ -203,6 +205,7 @@ fn visit_call_node(
             Node::Access(access_node) => visit_access_node(attribute_index, access_node),
             Node::Call(node) => visit_call_node(attribute_index, method_index, node),
             Node::Send(node) => visit_send_node(attribute_index, &method_index, node),
+            Node::Binary(node) => visit_binary_node(attribute_index, method_index, node),
             _ => {}
         }
     }
@@ -213,20 +216,32 @@ fn visit_send_node(
     method_index: &HashMap<String, Option<BaseType>>,
     send_node: &mut crate::parser::Send,
 ) {
-    if let Some(rt) = &send_node.return_type {
-        if rt == &BaseType::Class("".to_string()) {
-            let message_name = match send_node.message.as_ref() {
-                Node::Call(node) => &node.fn_name,
-                _ => "",
-            };
+    match send_node.receiver.as_mut() {
+        Node::Access(access_node) => visit_access_node(attribute_index, access_node),
+        Node::Call(node) => visit_call_node(attribute_index, method_index, node),
+        Node::Send(node) => visit_send_node(attribute_index, &method_index, node),
+        Node::Binary(node) => visit_binary_node(attribute_index, method_index, node),
+        _ => {}
+    }
 
-            // Crude method lookup
-            let base_type = method_index.get(message_name).unwrap();
-            match base_type {
-                Some(bt) => send_node.return_type = Some(bt.clone()),
-                None => {}
-            }
-        }
+    match send_node.receiver.as_mut() {
+        Node::Access(access_node) => visit_access_node(attribute_index, access_node),
+        Node::Call(node) => visit_call_node(attribute_index, method_index, node),
+        Node::Send(node) => visit_send_node(attribute_index, &method_index, node),
+        Node::Binary(node) => visit_binary_node(attribute_index, method_index, node),
+        _ => {}
+    }
+
+    let message_name = match send_node.message.as_ref() {
+        Node::Call(node) => &node.fn_name,
+        _ => "",
+    };
+
+    // Crude method lookup
+    let base_type = method_index.get(message_name).unwrap();
+    match base_type {
+        Some(bt) => send_node.return_type = Some(bt.clone()),
+        None => {}
     }
 }
 

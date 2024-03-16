@@ -210,7 +210,7 @@ impl Lexer<'_> {
                     };
 
                     match ch {
-                        'a'..='z' | 'A'..='Z' => {}
+                        'a'..='z' | 'A'..='Z' | '0'..='9' => {}
                         _ => break,
                     }
 
@@ -244,7 +244,7 @@ impl Lexer<'_> {
                     };
 
                     match ch {
-                        'a'..='z' | '_' => {}
+                        'a'..='z' | '_' | '0'..='9' => {}
                         _ => break,
                     }
 
@@ -326,7 +326,7 @@ impl Lexer<'_> {
                 token_pos.end_column = self.column_pos;
 
                 Token::Attribute(token_pos, attr_name.to_string())
-            },
+            }
 
             _ => {
                 println!("NOT IMPL{:#?}", ch);
