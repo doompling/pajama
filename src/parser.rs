@@ -295,9 +295,13 @@ impl<'a> Parser<'a> {
             let results = match self.current()? {
                 Token::Class => self.parse_class(&mut mctx),
                 Token::Trait => self.parse_trait(&mut mctx),
-                Token::Def => {
-                    self.parse_def(&mut mctx, "".to_string(), "".to_string(), "".to_string(), None)
-                }
+                Token::Def => self.parse_def(
+                    &mut mctx,
+                    "".to_string(),
+                    "".to_string(),
+                    "".to_string(),
+                    None,
+                ),
                 Token::DefE => self.parse_def_e(&mut mctx),
                 _ => {
                     println!("{:#?}", self.curr());
@@ -391,9 +395,13 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => {
-                    self.parse_def(mctx, class_name.clone(), "".to_string(), "".to_string(), new_fn)
-                }
+                Token::Def => self.parse_def(
+                    mctx,
+                    class_name.clone(),
+                    "".to_string(),
+                    "".to_string(),
+                    new_fn,
+                ),
                 Token::Impl => self.parse_impl(mctx, class_name.clone()),
                 Token::End => {
                     self.advance();
@@ -411,12 +419,10 @@ impl<'a> Parser<'a> {
             todo!()
         } else {
             // Construct a new function
-            let mut args = vec![
-                Arg {
-                    name: "sret".to_string(),
-                    return_type: BaseType::Class(mctx.class_name.clone())
-                }
-            ];
+            let mut args = vec![Arg {
+                name: "sret".to_string(),
+                return_type: BaseType::Class(mctx.class_name.clone()),
+            }];
 
             let mut body = vec![
                 // Node::LocalVar(LocalVar { name: "sret".to_string(), return_type: Some(BaseType::Class(mctx.class_name.clone())) })
@@ -429,18 +435,14 @@ impl<'a> Parser<'a> {
                         return_type: attribute.return_type.clone(),
                     });
 
-                    body.push(
-                        Node::AssignAttribute(AssignAttribute {
+                    body.push(Node::AssignAttribute(AssignAttribute {
+                        name: attribute.name.clone(),
+                        index: index as i32,
+                        value: Box::new(Node::LocalVar(LocalVar {
                             name: attribute.name.clone(),
-                            index: index as i32,
-                            value: Box::new(Node::LocalVar(
-                                LocalVar {
-                                    name: attribute.name.clone(),
-                                    return_type: Some(attribute.return_type.clone()),
-                                }
-                            ))
-                        })
-                    )
+                            return_type: Some(attribute.return_type.clone()),
+                        })),
+                    }))
                 }
             }
 
@@ -467,7 +469,7 @@ impl<'a> Parser<'a> {
                 body,
                 class_name: mctx.class_name.clone(),
                 impl_name: "".to_string(),
-                trait_name: "".to_string()
+                trait_name: "".to_string(),
             });
 
             functions.push(new_fn);
@@ -510,7 +512,9 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => self.parse_def(mctx, "".to_string(), "".to_string(), name.clone(), None),
+                Token::Def => {
+                    self.parse_def(mctx, "".to_string(), "".to_string(), name.clone(), None)
+                }
                 Token::End => {
                     self.advance();
                     break;
@@ -554,17 +558,12 @@ impl<'a> Parser<'a> {
             _ => return Err("Expected a new line after impl name"),
         };
 
-        println!("{:#?}", 1);
-
         if let Some(nodes) = self.index.trait_index.get_mut(&impl_name) {
-            println!("{:#?}", 2);
             nodes.push(Class {
                 name: class_name.clone(),
                 attributes: vec![],
             });
         } else {
-            println!("{:#?}", 3);
-
             self.index.trait_index.insert(
                 impl_name.clone(),
                 vec![
@@ -584,9 +583,13 @@ impl<'a> Parser<'a> {
             self.advance_optional_whitespace();
 
             let results = match self.current()? {
-                Token::Def => {
-                    self.parse_def(mctx, class_name.clone(), impl_name.clone(), "".to_string(), None)
-                }
+                Token::Def => self.parse_def(
+                    mctx,
+                    class_name.clone(),
+                    impl_name.clone(),
+                    "".to_string(),
+                    None,
+                ),
                 Token::End => {
                     self.advance();
                     break;
@@ -610,7 +613,7 @@ impl<'a> Parser<'a> {
         class_name: String,
         impl_name: String,
         trait_name: String,
-        new_function: Option<&Def>
+        new_function: Option<&Def>,
     ) -> Result<Vec<Node>, &'static str> {
         // Advance past 'def' keyword
         self.pos += 1;
@@ -689,7 +692,7 @@ impl<'a> Parser<'a> {
         // self.index.fn_index.insert(fn_name, arg_return_types);
     }
 
-    fn parse_def_e(&mut self, mctx: &mut ParserModuleCtx,) -> Result<Vec<Node>, &'static str> {
+    fn parse_def_e(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
         // Advance past 'def' keyword
         self.pos += 1;
 
@@ -712,7 +715,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parses the prototype of a function, whether external or user-defined.
-    fn parse_prototype(&mut self, mctx: &mut ParserModuleCtx,) -> Result<Prototype, &'static str> {
+    fn parse_prototype(&mut self, mctx: &mut ParserModuleCtx) -> Result<Prototype, &'static str> {
         match self.current()? {
             Token::Space(_) => {
                 self.advance();
@@ -1120,9 +1123,7 @@ impl<'a> Parser<'a> {
 
                                     Ok(Node::LocalVar(LocalVar {
                                         name: ident_name,
-                                        return_type: Some(BaseType::Class(
-                                            return_type_name,
-                                        )),
+                                        return_type: Some(BaseType::Class(return_type_name)),
                                     }))
                                 }
                                 _ => Err("Node other than AssignLocalVar in closest_assignment"),

@@ -77,8 +77,6 @@ fn run_type_inference(
     mut method_index: HashMap<String, Option<BaseType>>,
     mut attribute_index: HashMap<String, (i32, BaseType)>,
 ) {
-    println!("{:#?}", module.methods);
-
     module.methods.iter_mut().for_each(|node| {
         match node {
             Node::Def(def_node) => {
@@ -88,100 +86,126 @@ fn run_type_inference(
                     lvar_index.insert(arg.name.clone(), Some(arg.return_type.clone()));
                 });
 
-                def_node.body.iter_mut().for_each(|node| {
-                    match node {
-                        Node::Access(access_node) => { visit_access_node(&attribute_index,&lvar_index, access_node); },
-                        Node::AssignLocalVar(assignlocalvar_node) => {
-                            let return_type = match assignlocalvar_node.value.as_mut() {
-                                Node::Binary(binary_node) => {
-                                    visit_binary_node(&attribute_index, &method_index, &lvar_index, binary_node)
-                                }
-                                Node::Call(call_node) => {
-                                    visit_call_node(&attribute_index, &method_index, &lvar_index, call_node)
-                                }
-                                Node::Send(send_node) => {
-                                    visit_send_node(&attribute_index, &method_index, &lvar_index, send_node)
-                                }
-                                Node::Access(access_node) => visit_access_node(&attribute_index,&lvar_index, access_node),
-                                Node::AssignLocalVar(_) => todo!(),
-                                Node::Attribute(_) => todo!(),
-                                Node::Class(_) => todo!(),
-                                Node::Def(_) => todo!(),
-                                Node::DefE(_) => todo!(),
-                                Node::Impl(_) => todo!(),
-                                Node::Int(_) => todo!(),
-                                Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
-                                Node::LocalVar(_) => todo!(),
-                                Node::Module(_) => todo!(),
-                                Node::Ret(_) => todo!(),
-                                Node::SelfRef(_) => todo!(),
-                                Node::Trait(_) => todo!(),
-                                Node::AssignAttribute(_) => todo!(),
-                                Node::Const(_) => todo!(),
-                            };
-
-                            lvar_index.insert(assignlocalvar_node.name.clone(), return_type);
-
-                            // println!("{:#?}", "assignlocalvar_node");
-                            // println!("{:#?}", assignlocalvar_node);
-                        },
-                        Node::Binary(binary_node) => {
-                            visit_binary_node(&attribute_index, &method_index, &lvar_index, binary_node);
-                        }
-                        Node::Call(call_node) => { visit_call_node(&attribute_index, &method_index, &lvar_index, call_node); },
-                        Node::Send(send_node) => { visit_send_node(&attribute_index, &method_index, &lvar_index, send_node); },
-                        Node::Ret(ret_node) => { visit_ret_node(&attribute_index, &method_index, &lvar_index, ret_node); },
-                        Node::Attribute(_) => todo!(),
-                        Node::Class(_) => todo!(),
-                        Node::Def(_) => todo!(),
-                        Node::DefE(_) => todo!(),
-                        Node::Impl(_) => todo!(),
-                        Node::Int(_) => todo!(),
-                        Node::StringLiteral(_) => todo!(),
-                        Node::LocalVar(node) => {
-                            println!("{:#?}", node);
-                            todo!();
-                        },
-                        Node::Module(_) => todo!(),
-                        Node::SelfRef(_) => todo!(),
-                        Node::Trait(_) => todo!(),
-                        Node::AssignAttribute(assign_attr_node) => {
-                            // println!("assign_attr_node:");
-                            // println!("{:#?}", assign_attr_node);
-
-                            match assign_attr_node.value.as_mut() {
-                                Node::Binary(binary_node) => {
-                                    visit_binary_node(&attribute_index, &method_index, &lvar_index, binary_node)
-                                }
-                                Node::Call(call_node) => {
-                                    visit_call_node(&attribute_index, &method_index, &lvar_index, call_node)
-                                }
-                                Node::Send(send_node) => {
-                                    visit_send_node(&attribute_index, &method_index, &lvar_index, send_node)
-                                }
-                                Node::Access(access_node) => visit_access_node(&attribute_index,&lvar_index, access_node),
-                                Node::AssignLocalVar(_) => todo!(),
-                                Node::Attribute(_) => todo!(),
-                                Node::Class(_) => todo!(),
-                                Node::Def(_) => todo!(),
-                                Node::DefE(_) => todo!(),
-                                Node::Impl(_) => todo!(),
-                                Node::Int(_) => todo!(),
-                                Node::StringLiteral(_) => todo!(),
-                                Node::LocalVar(lvar) => lvar.return_type.clone(),
-                                Node::Module(_) => todo!(),
-                                Node::Ret(_) => todo!(),
-                                Node::SelfRef(_) => todo!(),
-                                Node::Trait(_) => todo!(),
-                                Node::AssignAttribute(_) => todo!(),
-                                Node::Const(_) => todo!(),
-
-                            };
-                        }
-                        Node::Const(_) => todo!(),
+                def_node.body.iter_mut().for_each(|node| match node {
+                    Node::Access(access_node) => {
+                        visit_access_node(&attribute_index, &lvar_index, access_node);
                     }
+                    Node::AssignLocalVar(assignlocalvar_node) => {
+                        let return_type = match assignlocalvar_node.value.as_mut() {
+                            Node::Binary(binary_node) => visit_binary_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                binary_node,
+                            ),
+                            Node::Call(call_node) => visit_call_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                call_node,
+                            ),
+                            Node::Send(send_node) => visit_send_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                send_node,
+                            ),
+                            Node::Access(access_node) => {
+                                visit_access_node(&attribute_index, &lvar_index, access_node)
+                            }
+                            Node::AssignLocalVar(_) => todo!(),
+                            Node::Attribute(_) => todo!(),
+                            Node::Class(_) => todo!(),
+                            Node::Def(_) => todo!(),
+                            Node::DefE(_) => todo!(),
+                            Node::Impl(_) => todo!(),
+                            Node::Int(_) => todo!(),
+                            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
+                            Node::LocalVar(_) => todo!(),
+                            Node::Module(_) => todo!(),
+                            Node::Ret(_) => todo!(),
+                            Node::SelfRef(_) => todo!(),
+                            Node::Trait(_) => todo!(),
+                            Node::AssignAttribute(_) => todo!(),
+                            Node::Const(_) => todo!(),
+                        };
+
+                        lvar_index.insert(assignlocalvar_node.name.clone(), return_type);
+                    }
+                    Node::Binary(binary_node) => {
+                        visit_binary_node(
+                            &attribute_index,
+                            &method_index,
+                            &lvar_index,
+                            binary_node,
+                        );
+                    }
+                    Node::Call(call_node) => {
+                        visit_call_node(&attribute_index, &method_index, &lvar_index, call_node);
+                    }
+                    Node::Send(send_node) => {
+                        visit_send_node(&attribute_index, &method_index, &lvar_index, send_node);
+                    }
+                    Node::Ret(ret_node) => {
+                        visit_ret_node(&attribute_index, &method_index, &lvar_index, ret_node);
+                    }
+                    Node::Attribute(_) => todo!(),
+                    Node::Class(_) => todo!(),
+                    Node::Def(_) => todo!(),
+                    Node::DefE(_) => todo!(),
+                    Node::Impl(_) => todo!(),
+                    Node::Int(_) => todo!(),
+                    Node::StringLiteral(_) => todo!(),
+                    Node::LocalVar(node) => {
+                        println!("{:#?}", node);
+                        todo!();
+                    }
+                    Node::Module(_) => todo!(),
+                    Node::SelfRef(_) => todo!(),
+                    Node::Trait(_) => todo!(),
+                    Node::AssignAttribute(assign_attr_node) => {
+                        match assign_attr_node.value.as_mut() {
+                            Node::Binary(binary_node) => visit_binary_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                binary_node,
+                            ),
+                            Node::Call(call_node) => visit_call_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                call_node,
+                            ),
+                            Node::Send(send_node) => visit_send_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                send_node,
+                            ),
+                            Node::Access(access_node) => {
+                                visit_access_node(&attribute_index, &lvar_index, access_node)
+                            }
+                            Node::AssignLocalVar(_) => todo!(),
+                            Node::Attribute(_) => todo!(),
+                            Node::Class(_) => todo!(),
+                            Node::Def(_) => todo!(),
+                            Node::DefE(_) => todo!(),
+                            Node::Impl(_) => todo!(),
+                            Node::Int(_) => todo!(),
+                            Node::StringLiteral(_) => todo!(),
+                            Node::LocalVar(lvar) => lvar.return_type.clone(),
+                            Node::Module(_) => todo!(),
+                            Node::Ret(_) => todo!(),
+                            Node::SelfRef(_) => todo!(),
+                            Node::Trait(_) => todo!(),
+                            Node::AssignAttribute(_) => todo!(),
+                            Node::Const(_) => todo!(),
+                        };
+                    }
+                    Node::Const(_) => todo!(),
                 })
-            },
+            }
             _ => {}
         };
     });
@@ -198,7 +222,7 @@ fn visit_ret_node(
         Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
         Node::Call(node) => visit_call_node(attribute_index, method_index, lvar_index, node),
         Node::Send(node) => visit_send_node(attribute_index, method_index, lvar_index, node),
-        _ => todo!()
+        _ => todo!(),
     };
 }
 
@@ -207,18 +231,13 @@ fn visit_access_node(
     lvar_index: &HashMap<String, Option<BaseType>>,
     access_node: &mut crate::parser::Access,
 ) -> Option<BaseType> {
-    println!("{:#?}", access_node);
-
     let class_name = match access_node.receiver.as_mut() {
         Node::LocalVar(lvar) => {
-            println!("lvar_index");
-            println!("{:#?}", lvar_index);
-
             let latest_return_type = lvar_index.get(&lvar.name).unwrap();
             lvar.return_type = latest_return_type.clone();
 
             nilla_class_name(&lvar.return_type.as_ref().unwrap())
-        },
+        }
         Node::Access(_) => todo!(),
         Node::AssignLocalVar(_) => todo!(),
         Node::Attribute(_) => todo!(),
@@ -245,10 +264,6 @@ fn visit_access_node(
     };
 
     let attr_key = format!("{}.{}", class_name, attribute_name);
-
-    println!("attr_key: {:#?}", attr_key);
-    println!("attribute_index: {:#?}", attribute_index);
-
     let (index, return_type) = attribute_index.get(&attr_key).unwrap();
 
     access_node.index = *index;
@@ -268,7 +283,7 @@ fn visit_binary_node(
         Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
         Node::Call(node) => visit_call_node(attribute_index, method_index, lvar_index, node),
         Node::Send(node) => visit_send_node(attribute_index, method_index, lvar_index, node),
-        _ => todo!()
+        _ => todo!(),
     };
 
     match binary_node.right.as_mut() {
@@ -276,7 +291,7 @@ fn visit_binary_node(
         Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
         Node::Call(node) => visit_call_node(attribute_index, method_index, lvar_index, node),
         Node::Send(node) => visit_send_node(attribute_index, method_index, lvar_index, node),
-        _ => todo!()
+        _ => todo!(),
     }
 }
 
@@ -286,24 +301,28 @@ fn visit_call_node(
     lvar_index: &HashMap<String, Option<BaseType>>,
     call_node: &mut crate::parser::Call,
 ) -> Option<BaseType> {
-    println!("{:#?}", &call_node);
-
-    println!("{:#?}", method_index);
-
     let base_type = method_index.get(&call_node.fn_name).unwrap();
     call_node.return_type = base_type.clone();
 
     for arg in &mut call_node.args {
         match arg {
-            Node::Access(access_node) => { visit_access_node(attribute_index, lvar_index, access_node); },
-            Node::Call(node) => { visit_call_node(attribute_index, method_index, lvar_index, node); },
-            Node::Send(node) => { visit_send_node(attribute_index, &method_index, lvar_index, node); },
-            Node::Binary(node) => { visit_binary_node(attribute_index, method_index, lvar_index, node); },
+            Node::Access(access_node) => {
+                visit_access_node(attribute_index, lvar_index, access_node);
+            }
+            Node::Call(node) => {
+                visit_call_node(attribute_index, method_index, lvar_index, node);
+            }
+            Node::Send(node) => {
+                visit_send_node(attribute_index, &method_index, lvar_index, node);
+            }
+            Node::Binary(node) => {
+                visit_binary_node(attribute_index, method_index, lvar_index, node);
+            }
             Node::LocalVar(lvar) => {
                 let latest_return_type = lvar_index.get(&lvar.name).unwrap();
                 lvar.return_type = latest_return_type.clone();
             }
-            _ => todo!()
+            _ => todo!(),
         };
     }
 
@@ -317,64 +336,47 @@ fn visit_send_node(
     send_node: &mut crate::parser::Send,
 ) -> Option<BaseType> {
     let fn_name = match send_node.message.as_mut() {
-        Node::Call(node) => {
-            &node.fn_name
-        },
+        Node::Call(node) => &node.fn_name,
         _ => todo!(),
     };
 
-    let basetype =
-        match send_node.receiver.as_mut() {
-            Node::Access(access_node) => visit_access_node(attribute_index, lvar_index, access_node),
-            Node::Call(node) => visit_call_node(attribute_index, method_index, lvar_index, node),
-            Node::Send(node) => visit_send_node(attribute_index, &method_index, lvar_index, node),
-            Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
-            Node::LocalVar(lvar) => {
-                let latest_return_type = lvar_index.get(&lvar.name).unwrap();
-                lvar.return_type = latest_return_type.clone();
-                latest_return_type.clone()
+    let basetype = match send_node.receiver.as_mut() {
+        Node::Access(access_node) => visit_access_node(attribute_index, lvar_index, access_node),
+        Node::Call(node) => visit_call_node(attribute_index, method_index, lvar_index, node),
+        Node::Send(node) => visit_send_node(attribute_index, &method_index, lvar_index, node),
+        Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
+        Node::LocalVar(lvar) => {
+            let latest_return_type = lvar_index.get(&lvar.name).unwrap();
+            lvar.return_type = latest_return_type.clone();
+            latest_return_type.clone()
+        }
+        Node::Const(node) => {
+            if fn_name == "new" {
+                send_node.return_type = Some(BaseType::Class(node.name.clone()));
+                Some(BaseType::Class(node.name.clone()))
+                // return;
+            } else {
+                todo!("class methods")
             }
-            Node::Const(node) => {
-                if fn_name == "new" {
-                    send_node.return_type = Some(BaseType::Class(node.name.clone()));
-                    Some(BaseType::Class(node.name.clone()))
-                    // return;
-                } else {
-                    todo!("class methods")
-                }
-            }
-            _ => {
-                None
-                // println!("{:#?}", send_node);
-                // todo!()
-            }
-        };
-
-    println!("{:#?}", send_node);
-
-    // let basetype = match &basetype {
-    //     Some(basetype) => todo!(),
-    //     None => BaseType::Void,
-    // };
+        }
+        _ => None,
+    };
 
     let class_name = nilla_class_name(&basetype.unwrap());
     let message_name = match send_node.message.as_mut() {
         Node::Call(node) => {
             format!("{}.{}", class_name, &node.fn_name)
-        },
+        }
         _ => "".to_string(),
     };
-
-    println!("method_index");
-    println!("{:#?}", method_index);
 
     let base_type = method_index.get(&message_name).unwrap();
     match base_type {
         Some(bt) => {
             send_node.return_type = Some(bt.clone());
             Some(bt.clone())
-        },
-        None => None
+        }
+        None => None,
     }
 }
 
