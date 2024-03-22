@@ -22,6 +22,7 @@ impl NillaCompiler {
 
         SemanticAnalyzer::run(&mut parser_result);
 
+        println!("RESULTS: ######");
         println!("{:#?}", parser_result);
 
         Compiler::compile(&parser_result);
