@@ -79,6 +79,7 @@ pub struct Compiler<'a, 'ctx> {
 #[derive(Debug)]
 pub struct Ctx<'ctx, 'a> {
     pub lvars: HashMap<String, Value<'ctx, 'a>>,
+    pub lvar_stores: HashMap<String, Value<'ctx, 'a>>,
     pub global_var_counter: i32,
 }
 
@@ -225,7 +226,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         for node in module.methods.iter() {
             match &node {
                 Node::Def(def) => self.compile_def(def),
-                Node::DefE(def_e) => self.compile_external_fn(def_e),
+                Node::DefE(def_e) => {
+                    self.compile_external_fn(def_e)
+                },
                 Node::Ret(ret) => todo!(),
                 Node::Access(_) => todo!(),
                 Node::AssignLocalVar(_) => todo!(),
@@ -243,6 +246,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 Node::Class(class) => panic!("Classes are not directly compiled"),
                 Node::AssignAttribute(_) => todo!(),
                 Node::Const(_) => todo!(),
+                Node::AssignAttributeAccess(_) => todo!(),
             }
         }
     }
@@ -395,6 +399,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let region = Region::new();
         let mut ctx = Ctx {
             lvars: HashMap::new(),
+            lvar_stores: HashMap::new(),
             global_var_counter: 0,
         };
 
@@ -409,11 +414,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 BaseType::Void => {}
                 BaseType::Class(_) => {
                     // When a class is the first argument
-                    if index == 0 {
+                    // if index == 0 {
                         let arg_n = block.argument(index).unwrap();
                         ctx.lvars.insert(arg.name.clone(), arg_n.into());
                         continue;
-                    }
+                    // }
                 }
             };
 
@@ -496,6 +501,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         match *&expr {
             Node::Access(node) => self.compile_attribute_access(block, node, ctx),
             Node::AssignAttribute(node) => self.compile_assign_attribute(block, node, ctx),
+            Node::AssignAttributeAccess(node) => self.compile_assign_attribute_access_var(block, node, ctx),
             Node::AssignLocalVar(asgn_lvar) => self.compile_assign_local_var(block, asgn_lvar, ctx),
             Node::Binary(binary) => self.compile_binary(block, binary, ctx),
             Node::Call(call) => self.compile_call(block, call, ctx),
@@ -1045,12 +1051,245 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(Some(loaded_val))
     }
 
+    fn compile_assign_attribute_access_var(
+        &self,
+        block: &'a Block<'ctx>,
+        assignment: &parser::AssignAttributeAccess,
+        ctx: &mut Ctx<'ctx, 'a>,
+    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+        let return_val = match self.compile_expr(&block, &assignment.value, ctx) {
+            Ok(ret_val) => ret_val,
+            Err(e) => return Err(e),
+        };
+
+        let class_ptr_ref =
+            match assignment.access.receiver.as_ref() {
+                Node::Access(_) => todo!(),
+                Node::AssignLocalVar(_) => todo!(),
+                Node::Attribute(_) => todo!(),
+                Node::Binary(_) => todo!(),
+                Node::Call(_) => todo!(),
+                Node::Class(_) => todo!(),
+                Node::Def(_) => todo!(),
+                Node::DefE(_) => todo!(),
+                Node::Impl(_) => todo!(),
+                Node::Int(_) => todo!(),
+                Node::StringLiteral(_) => todo!(),
+                Node::LocalVar(lvar) => {
+                    ctx.lvars.get(&lvar.name).unwrap()
+
+                    // match ctx.lvar_stores.get(&lvar.name) {
+                    //     Some(_) => {},
+                    //     None => {
+                    //         ctx.lvars.get(&lvar.name).unwrap()
+                    //     },
+                    // }
+                },
+                Node::Module(_) => todo!(),
+                Node::Ret(_) => todo!(),
+                Node::SelfRef(_) => todo!(),
+                Node::Send(_) => todo!(),
+                Node::Trait(_) => todo!(),
+                Node::AssignAttribute(_) => todo!(),
+                Node::AssignAttributeAccess(_) => todo!(),
+                Node::Const(_) => todo!(),
+            };
+
+        // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
+
+        let gep = block
+            .append_operation(llvm::get_element_ptr(
+                &self.context,
+                *class_ptr_ref,
+                DenseI32ArrayAttribute::new(&self.context, &[0, assignment.access.index]),
+                llvm::r#type::r#pointer(return_val.unwrap().r#type(), 0),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        block.append_operation(llvm::store(
+            &self.context,
+            return_val.unwrap(),
+            gep,
+            Location::unknown(&self.context),
+            Default::default(),
+        ));
+
+        return Ok(return_val);
+
+
+
+        // match asgn_attr.value.as_ref() {
+        //     Node::Access(_) => todo!(),
+        //     Node::AssignLocalVar(_) => todo!(),
+        //     Node::Attribute(_) => todo!(),
+        //     Node::Binary(_) => todo!(),
+        //     Node::Call(_) => todo!(),
+        //     Node::Class(_) => todo!(),
+        //     Node::Def(_) => todo!(),
+        //     Node::DefE(_) => todo!(),
+        //     Node::Impl(_) => todo!(),
+        //     Node::Int(_) => todo!(),
+        //     Node::StringLiteral(_) => todo!(),
+        //     Node::LocalVar(lvar) => {
+        //         match ctx.lvar_stores.get(&lvar.name) {
+        //             Some(_) => {},
+        //             None => {
+        //                 let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
+        //                 let ptr = self.append_alloca_store(*lvar_value, block);
+        //                 ctx.lvars.insert(lvar.name.clone(), ptr);
+        //                 ctx.lvar_stores.insert(lvar.name.clone(), ptr);
+        //             },
+        //         }
+        //     },
+        //     Node::Module(_) => todo!(),
+        //     Node::Ret(_) => todo!(),
+        //     Node::SelfRef(_) => todo!(),
+        //     Node::Send(_) => todo!(),
+        //     Node::Trait(_) => todo!(),
+        //     Node::AssignAttribute(_) => todo!(),
+        //     Node::Const(_) => todo!(),
+        //     Node::AssignAttributeAccess(_) => todo!(),
+        // }
+
+        // let return_val = match self.compile_expr(&block, &asgn_attr.value, ctx) {
+        //     Ok(ret_val) => ret_val,
+        //     Err(e) => return Err(e),
+        // };
+
+        // let sret_value = ctx.lvars.get("sret").unwrap();
+
+        // let gep = block
+        //     .append_operation(llvm::get_element_ptr(
+        //         &self.context,
+        //         *sret_value,
+        //         DenseI32ArrayAttribute::new(&self.context, &[0, asgn_attr.index]),
+        //         llvm::r#type::r#pointer(return_val.unwrap().r#type(), 0),
+        //         Location::unknown(&self.context),
+        //     ))
+        //     .result(0)
+        //     .unwrap()
+        //     .into();
+
+        // block.append_operation(llvm::store(
+        //     &self.context,
+        //     return_val.unwrap(),
+        //     gep,
+        //     Location::unknown(&self.context),
+        //     Default::default(),
+        // ));
+
+        // Ok(return_val)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        // let return_type = match asgn_lvar.value.as_ref() {
+        //     Node::Access(_) => todo!(),
+        //     Node::AssignLocalVar(_) => todo!(),
+        //     Node::Attribute(_) => todo!(),
+        //     Node::Binary(_) => todo!(),
+        //     Node::Call(_) => todo!(),
+        //     Node::Class(_) => todo!(),
+        //     Node::Def(_) => todo!(),
+        //     Node::DefE(_) => todo!(),
+        //     Node::Impl(_) => todo!(),
+        //     Node::Int(_) => todo!(),
+        //     Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
+        //     Node::LocalVar(_) => todo!(),
+        //     Node::Module(_) => todo!(),
+        //     Node::Ret(_) => todo!(),
+        //     Node::SelfRef(_) => todo!(),
+        //     Node::Send(send_node) => send_node.return_type.clone(),
+        //     Node::Trait(_) => todo!(),
+        //     Node::AssignAttribute(_) => todo!(),
+        //     Node::Const(_) => todo!(),
+        // };
+
+        // match &return_type {
+        //     Some(base_type) => {
+        //         match base_type {
+        //             BaseType::BytePtr => {}
+        //             BaseType::Int => {}
+        //             BaseType::Void => {}
+        //             BaseType::Class(class_name) => {
+        //                 if class_name == "Str" {
+        //                     // Todo: new .new for strings
+        //                 } else {
+        //                     ctx.lvars
+        //                         .insert(asgn_lvar.name.clone(), return_val.unwrap());
+        //                     return Ok(return_val);
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     None => todo!(),
+        // }
+
+        // let ptr = self.append_alloca_store(return_val.unwrap(), block);
+        // ctx.lvars.insert(asgn_lvar.name.clone(), ptr);
+
+        // Ok(return_val)
+
+        todo!()
+    }
+
     fn compile_assign_attribute(
         &self,
         block: &'a Block<'ctx>,
         asgn_attr: &parser::AssignAttribute,
         ctx: &mut Ctx<'ctx, 'a>,
     ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+        // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
+
+        println!("asgn_attr");
+        println!("{:#?}", &asgn_attr);
+
+        match asgn_attr.value.as_ref() {
+            Node::Access(_) => todo!(),
+            Node::AssignLocalVar(_) => todo!(),
+            Node::Attribute(_) => todo!(),
+            Node::Binary(_) => todo!(),
+            Node::Call(_) => todo!(),
+            Node::Class(_) => todo!(),
+            Node::Def(_) => todo!(),
+            Node::DefE(_) => todo!(),
+            Node::Impl(_) => todo!(),
+            Node::Int(_) => todo!(),
+            Node::StringLiteral(_) => todo!(),
+            Node::LocalVar(lvar) => {
+                match ctx.lvar_stores.get(&lvar.name) {
+                    Some(_) => {},
+                    None => {
+                        let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
+                        let ptr = self.append_alloca_store(*lvar_value, block);
+                        ctx.lvars.insert(lvar.name.clone(), ptr);
+                        ctx.lvar_stores.insert(lvar.name.clone(), ptr);
+                    },
+                }
+            },
+            Node::Module(_) => todo!(),
+            Node::Ret(_) => todo!(),
+            Node::SelfRef(_) => todo!(),
+            Node::Send(_) => todo!(),
+            Node::Trait(_) => todo!(),
+            Node::AssignAttribute(_) => todo!(),
+            Node::Const(_) => todo!(),
+            Node::AssignAttributeAccess(_) => todo!(),
+        }
+
         let return_val = match self.compile_expr(&block, &asgn_attr.value, ctx) {
             Ok(ret_val) => ret_val,
             Err(e) => return Err(e),
@@ -1112,6 +1351,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::Trait(_) => todo!(),
             Node::AssignAttribute(_) => todo!(),
             Node::Const(_) => todo!(),
+            Node::AssignAttributeAccess(_) => todo!(),
         };
 
         match &return_type {

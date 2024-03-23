@@ -31,6 +31,12 @@ pub struct AssignAttribute {
 }
 
 #[derive(Debug)]
+pub struct AssignAttributeAccess {
+    pub access: Access,
+    pub value: Box<Node>,
+}
+
+#[derive(Debug)]
 pub struct AssignLocalVar {
     pub name: String,
     pub value: Box<Node>,
@@ -150,6 +156,7 @@ pub enum Node {
     Send(Send),
     Trait(Trait),
     AssignAttribute(AssignAttribute),
+    AssignAttributeAccess(AssignAttributeAccess),
     Const(Const),
     // AllocaClass(AllocaClass),
 }
@@ -424,9 +431,7 @@ impl<'a> Parser<'a> {
                 return_type: BaseType::Class(mctx.class_name.clone()),
             }];
 
-            let mut body = vec![
-                // Node::LocalVar(LocalVar { name: "sret".to_string(), return_type: Some(BaseType::Class(mctx.class_name.clone())) })
-            ];
+            let mut body = vec![];
 
             for (index, node) in class_node.attributes.iter().enumerate() {
                 if let Node::Attribute(attribute) = node {
@@ -445,17 +450,6 @@ impl<'a> Parser<'a> {
                     }))
                 }
             }
-
-            // body.push(
-            //     Node::Ret(Ret {
-            //         value: Box::new(Node::LocalVar(
-            //             LocalVar {
-            //                 name: "sret".to_string(),
-            //                 return_type: Some(BaseType::Class(mctx.class_name.clone())),
-            //             }
-            //         ))
-            //     })
-            // );
 
             let new_fn = Node::Def(Def {
                 main_fn: false,
@@ -931,7 +925,8 @@ impl<'a> Parser<'a> {
         mctx: &mut ParserModuleCtx,
         ctx: &ParserFunctionCtx,
     ) -> Result<Node, &'static str> {
-        println!("{:#?}", self.curr());
+        // println!("current:");
+        // println!("{:#?}", self.curr());
 
         let node = match self.curr() {
             Token::Attribute(_, _) => self.parse_attribute_expr(mctx, ctx),
@@ -966,6 +961,11 @@ impl<'a> Parser<'a> {
             Token::Attribute(pos, name) => {
                 self.advance();
                 self.advance_optional_whitespace();
+
+                // let node = match self.peek()? {
+                //     Token::Assign => return self.parse_assign_attribute_expr(mctx, ctx),
+                //     _ => {}
+                // };
 
                 let receiver = Box::new(Node::SelfRef(SelfRef {
                     return_type: BaseType::Class(mctx.class_name.clone()),
@@ -1190,7 +1190,50 @@ impl<'a> Parser<'a> {
 
         match self.curr() {
             Token::Dot => self.parse_dot_expr(mctx, ctx, node),
+            Token::Assign => self.parse_assignment_expr(mctx, ctx, node),
             _ => node,
+        }
+    }
+
+    fn parse_assignment_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+        receiver: Result<Node, &'static str>
+    ) -> Result<Node, &'static str> {
+        let receiver = match receiver {
+            Ok(node) => node,
+            Err(err) => return Err(err),
+        };
+
+        self.advance();
+        self.advance_optional_whitespace();
+
+        let value = Box::new(self.parse_expr(mctx, ctx).unwrap());
+
+        match receiver {
+            Node::Access(access) => {
+                Ok(Node::AssignAttributeAccess(AssignAttributeAccess { access, value }))
+            },
+            Node::AssignLocalVar(_) => todo!(),
+            Node::Attribute(_) => todo!(),
+            Node::Binary(_) => todo!(),
+            Node::Call(_) => todo!(),
+            Node::Class(_) => todo!(),
+            Node::Def(_) => todo!(),
+            Node::DefE(_) => todo!(),
+            Node::Impl(_) => todo!(),
+            Node::Int(_) => todo!(),
+            Node::StringLiteral(_) => todo!(),
+            Node::LocalVar(_) => todo!(),
+            Node::Module(_) => todo!(),
+            Node::Ret(_) => todo!(),
+            Node::SelfRef(_) => todo!(),
+            Node::Send(_) => todo!(),
+            Node::Trait(_) => todo!(),
+            Node::AssignAttribute(_) => todo!(),
+            Node::AssignAttributeAccess(_) => todo!(),
+            Node::Const(_) => todo!(),
         }
     }
 

@@ -5,18 +5,21 @@ class Str
    @buffer BytePtr
    @length Int
    @max_length Int
+end
 
-   def print(other_str Str)
-      other_str.print_2()
-   end
+class MyClass
+   @host Str
+end
 
-   def print_2
-      print_bytes(@buffer, @length)
-   end
+def print(str Str)
+   print_bytes(str.buffer, str.length)
 end
 
 def main
-   a_string = "yarp"
-   other_string = "bruh"
-   a_string.print(other_string)
+   hosto = "one"
+   instance = MyClass.new(hosto)
+
+   instance.host = "something new"
+
+   print(instance.host)
 end

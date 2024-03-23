@@ -128,6 +128,7 @@ fn run_type_inference(
                             Node::Trait(_) => todo!(),
                             Node::AssignAttribute(_) => todo!(),
                             Node::Const(_) => todo!(),
+                            Node::AssignAttributeAccess(_) => todo!(),
                         };
 
                         lvar_index.insert(assignlocalvar_node.name.clone(), return_type);
@@ -201,9 +202,53 @@ fn run_type_inference(
                             Node::Trait(_) => todo!(),
                             Node::AssignAttribute(_) => todo!(),
                             Node::Const(_) => todo!(),
+                            Node::AssignAttributeAccess(_) => todo!(),
                         };
                     }
                     Node::Const(_) => todo!(),
+                    Node::AssignAttributeAccess(node) => {
+                        visit_access_node(&attribute_index, &lvar_index, &mut node.access);
+
+                        match node.value.as_mut() {
+                            Node::Binary(binary_node) => visit_binary_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                binary_node,
+                            ),
+                            Node::Call(call_node) => visit_call_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                call_node,
+                            ),
+                            Node::Send(send_node) => visit_send_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                send_node,
+                            ),
+                            Node::Access(access_node) => {
+                                visit_access_node(&attribute_index, &lvar_index, access_node)
+                            }
+                            Node::AssignLocalVar(_) => todo!(),
+                            Node::Attribute(_) => todo!(),
+                            Node::Class(_) => todo!(),
+                            Node::Def(_) => todo!(),
+                            Node::DefE(_) => todo!(),
+                            Node::Impl(_) => todo!(),
+                            Node::Int(_) => todo!(),
+                            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
+                            Node::LocalVar(lvar) => lvar.return_type.clone(),
+                            Node::Module(_) => todo!(),
+                            Node::Ret(_) => todo!(),
+                            Node::SelfRef(_) => todo!(),
+                            Node::Trait(_) => todo!(),
+                            Node::AssignAttribute(_) => todo!(),
+                            Node::Const(_) => todo!(),
+                            Node::AssignAttributeAccess(_) => todo!(),
+                        };
+                    },
                 })
             }
             _ => {}
@@ -256,6 +301,7 @@ fn visit_access_node(
         Node::Trait(_) => todo!(),
         Node::AssignAttribute(_) => todo!(),
         Node::Const(_) => todo!(),
+        Node::AssignAttributeAccess(_) => todo!(),
     };
 
     let attribute_name = match access_node.message.as_mut() {
@@ -322,6 +368,7 @@ fn visit_call_node(
                 let latest_return_type = lvar_index.get(&lvar.name).unwrap();
                 lvar.return_type = latest_return_type.clone();
             }
+            Node::StringLiteral(_) => {}
             _ => todo!(),
         };
     }
