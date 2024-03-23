@@ -1199,7 +1199,7 @@ impl<'a> Parser<'a> {
         &mut self,
         mctx: &mut ParserModuleCtx,
         ctx: &ParserFunctionCtx,
-        receiver: Result<Node, &'static str>
+        receiver: Result<Node, &'static str>,
     ) -> Result<Node, &'static str> {
         let receiver = match receiver {
             Ok(node) => node,
@@ -1212,9 +1212,10 @@ impl<'a> Parser<'a> {
         let value = Box::new(self.parse_expr(mctx, ctx).unwrap());
 
         match receiver {
-            Node::Access(access) => {
-                Ok(Node::AssignAttributeAccess(AssignAttributeAccess { access, value }))
-            },
+            Node::Access(access) => Ok(Node::AssignAttributeAccess(AssignAttributeAccess {
+                access,
+                value,
+            })),
             Node::AssignLocalVar(_) => todo!(),
             Node::Attribute(_) => todo!(),
             Node::Binary(_) => todo!(),

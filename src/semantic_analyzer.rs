@@ -248,7 +248,7 @@ fn run_type_inference(
                             Node::Const(_) => todo!(),
                             Node::AssignAttributeAccess(_) => todo!(),
                         };
-                    },
+                    }
                 })
             }
             _ => {}
