@@ -1108,8 +1108,6 @@ impl<'a> Parser<'a> {
                         match closest_assignment {
                             Some(asgnLvar) => match asgnLvar {
                                 Node::AssignLocalVar(asgnLvar) => {
-                                    println!("{:#?}", asgnLvar.value);
-
                                     let return_type_name = match asgnLvar.value.as_ref() {
                                             Node::Int(_) => "Int".to_string(),
                                             Node::StringLiteral(_) => "Str".to_string(),
@@ -1117,9 +1115,6 @@ impl<'a> Parser<'a> {
                                             Node::Send(send) => self.nilla_class_name(&send.return_type),
                                             _ => return Err("Local variable assignment was given an unsupprted node, given")
                                         };
-
-                                    println!("asgnLvar:::");
-                                    println!("{:#?}", asgnLvar);
 
                                     Ok(Node::LocalVar(LocalVar {
                                         name: ident_name,

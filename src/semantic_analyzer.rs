@@ -158,8 +158,7 @@ fn run_type_inference(
                     Node::Int(_) => todo!(),
                     Node::StringLiteral(_) => todo!(),
                     Node::LocalVar(node) => {
-                        println!("{:#?}", node);
-                        todo!();
+                        // println!("{:#?}", node);
                     }
                     Node::Module(_) => todo!(),
                     Node::SelfRef(_) => todo!(),
@@ -409,10 +408,15 @@ fn visit_send_node(
         _ => None,
     };
 
-    let class_name = nilla_class_name(&basetype.unwrap());
+    let class_name = nilla_class_name(&basetype.as_ref().unwrap());
     let message_name = match send_node.message.as_mut() {
         Node::Call(node) => {
-            format!("{}.{}", class_name, &node.fn_name)
+            let prefixed_name = format!("{}.{}", class_name, &node.fn_name);
+            node.fn_name = prefixed_name.clone();
+
+            visit_call_node(attribute_index, method_index, lvar_index, node);
+
+            prefixed_name
         }
         _ => "".to_string(),
     };

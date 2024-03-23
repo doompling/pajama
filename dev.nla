@@ -19,10 +19,22 @@ class MyClass
    end
 end
 
+class OtherClass
+   @thing Str
+
+   def printer(instance MyClass)
+      instance.agogo()
+   end
+end
+
 def main
    instance = MyClass.new("localhost")
    instance.agogo()
 
+   other_instance = OtherClass.new("other_instance")
+   other_instance.printer(instance)
+
    instance.host = "newhost"
-   instance.agogo()
+
+   other_instance.printer(instance)
 end
