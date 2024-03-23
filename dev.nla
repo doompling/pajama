@@ -7,19 +7,22 @@ class Str
    @max_length Int
 end
 
-class MyClass
-   @host Str
-end
-
-def print(str Str)
+def base_print(str Str)
    print_bytes(str.buffer, str.length)
 end
 
+class MyClass
+   @host Str
+
+   def agogo
+      base_print(@host)
+   end
+end
+
 def main
-   hosto = "one"
-   instance = MyClass.new(hosto)
+   instance = MyClass.new("localhost")
+   instance.agogo()
 
-   instance.host = "something new"
-
-   print(instance.host)
+   instance.host = "newhost"
+   instance.agogo()
 end
