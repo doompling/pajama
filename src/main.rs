@@ -1,4 +1,3 @@
-mod codegen;
 mod lexer;
 mod mlir_codegen;
 mod nilla_compiler;

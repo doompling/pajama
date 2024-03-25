@@ -27,7 +27,6 @@ use std::array;
 use std::borrow::BorrowMut;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
-use train_map::TrainMap;
 
 #[no_mangle]
 pub fn print_int(int: i32) {
