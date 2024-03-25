@@ -74,7 +74,6 @@ pub struct Compiler<'c, 'm> {
     pub module: &'c Module<'m>,
     pub llvm_types: LlvmTypes<'c>,
     pub class_type_index: HashMap<String, Type<'m>>,
-
     // pub llvm_types: LlvmTypes<'m>,
     // pub class_type_index: HashMap<String, Type<'m>>,
 
@@ -95,7 +94,11 @@ pub struct FnCtx<'c, 'a> {
 }
 
 impl<'c, 'm> Compiler<'c, 'm> {
-    pub fn new(context: &'c Context, module: &'m Module<'c>, parser_result: &'m ParserResult) -> Self {
+    pub fn new(
+        context: &'c Context,
+        module: &'m Module<'c>,
+        parser_result: &'m ParserResult,
+    ) -> Self {
         let i8_type = IntegerType::new(context, 8).into();
         let i8_ptr_type = llvm::r#type::r#pointer(i8_type, 0);
         let i8_array_type = llvm::r#type::array(i8_type, 5);
@@ -142,7 +145,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
             module,
             parser_result,
             llvm_types,
-            class_type_index
+            class_type_index,
         }
     }
 
@@ -1174,9 +1177,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 region.append_block(before_block);
                 region
             },
-            {
-                self.compile_block(&loop_node.body, mctx)?
-            },
+            { self.compile_block(&loop_node.body, mctx)? },
             location,
         ));
 
@@ -1200,47 +1201,43 @@ impl<'c, 'm> Compiler<'c, 'm> {
             self.compile_expr(&builder, node, &mut block_ctx, mctx);
         });
 
-        builder.append_operation(scf::r#yield(
-            &[],
-            Location::unknown(&self.context),
-        ));
+        builder.append_operation(scf::r#yield(&[], Location::unknown(&self.context)));
 
         let region = Region::new();
         region.append_block(builder);
         Ok(region)
     }
 
-// let builder = Block::new(&[]);
-        // let mut variables = variables.fork();
+    // let builder = Block::new(&[]);
+    // let mut variables = variables.fork();
 
-        // let r#type =
-            // self.compile_statements(&builder, &block.stmts, function_scope, &mut variables)?;
+    // let r#type =
+    // self.compile_statements(&builder, &block.stmts, function_scope, &mut variables)?;
 
-            // let after_block = Block::new(&[]);
+    // let after_block = Block::new(&[]);
 
-            // // for node in loop_node.body.iter() {
-            // //     self.compile_expr(&after_block, node, ctx, mctx);
-            // // }
+    // // for node in loop_node.body.iter() {
+    // //     self.compile_expr(&after_block, node, ctx, mctx);
+    // // }
 
-            // nodes.iter().for_each(|node| {
-            //     self.compile_expr(&after_block, node, ctx, mctx);
-            // });
+    // nodes.iter().for_each(|node| {
+    //     self.compile_expr(&after_block, node, ctx, mctx);
+    // });
 
+    // //     match self.compile_expr(&after_block, node, &mut ctx, mctx) {
+    // //     Ok(ret_val) => ret_val,
+    // //     // Err(e) => return Err(e),
+    // //     Err(e) => panic!("Waaah"),
+    // // });
 
-            // //     match self.compile_expr(&after_block, node, &mut ctx, mctx) {
-            // //     Ok(ret_val) => ret_val,
-            // //     // Err(e) => return Err(e),
-            // //     Err(e) => panic!("Waaah"),
-            // // });
+    // // after_block.append_operation(scf::r#yield(
+    // //     &[],
+    // //     location,
+    // // ));
 
-            // // after_block.append_operation(scf::r#yield(
-            // //     &[],
-            // //     location,
-            // // ));
-
-            // let region = Region::new();
-            // region.append_block(after_block);
-            // Ok(region)
+    // let region = Region::new();
+    // region.append_block(after_block);
+    // Ok(region)
     // }
 
     fn compile_assign_attribute_access<'a>(
@@ -1433,33 +1430,34 @@ impl<'c, 'm> Compiler<'c, 'm> {
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
 
-        let return_val =
-            match asgn_attr.value.as_ref() {
-                Node::LocalVar(lvar) => match ctx.lvar_stores.get(&lvar.name) {
-                    Some(value) => *value,
-                    None => {
-                        let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
-                        let return_type = lvar_value.r#type();
-                        let ptr = self.append_alloca_store(*lvar_value, block);
-                        ctx.lvars.insert(lvar.name.clone(), ptr);
-                        ctx.lvar_stores.insert(lvar.name.clone(), ptr);
+        let return_val = match asgn_attr.value.as_ref() {
+            Node::LocalVar(lvar) => match ctx.lvar_stores.get(&lvar.name) {
+                Some(value) => *value,
+                None => {
+                    let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
+                    let return_type = lvar_value.r#type();
+                    let ptr = self.append_alloca_store(*lvar_value, block);
+                    ctx.lvars.insert(lvar.name.clone(), ptr);
+                    ctx.lvar_stores.insert(lvar.name.clone(), ptr);
 
-                        block.append_operation(llvm::load(
+                    block
+                        .append_operation(llvm::load(
                             &self.context,
                             ptr,
                             return_type,
                             Location::unknown(&self.context),
                             Default::default(),
-                        )).result(0).unwrap().into()
-                    }
-                },
-                _ => {
-                    match self.compile_expr(&block, &asgn_attr.value, ctx, mctx) {
-                        Ok(ret_val) => ret_val.unwrap(),
-                        Err(e) => return Err(e),
-                    }
+                        ))
+                        .result(0)
+                        .unwrap()
+                        .into()
                 }
-            };
+            },
+            _ => match self.compile_expr(&block, &asgn_attr.value, ctx, mctx) {
+                Ok(ret_val) => ret_val.unwrap(),
+                Err(e) => return Err(e),
+            },
+        };
 
         let sret_value = ctx.lvars.get("sret").unwrap();
 
@@ -1550,11 +1548,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         Ok(return_val)
     }
 
-    fn append_alloca_store<'a>(
-        &self,
-        value: Value<'m, '_>,
-        block: &'a Block<'c>,
-    ) -> Value<'c, 'a> {
+    fn append_alloca_store<'a>(&self, value: Value<'m, '_>, block: &'a Block<'c>) -> Value<'c, 'a> {
         let size = block
             .append_operation(arith::constant(
                 &self.context,
@@ -1590,11 +1584,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ptr
     }
 
-    fn append_alloca_class<'a>(
-        &self,
-        class_type: Type<'m>,
-        block: &'a Block<'c>,
-    ) -> Value<'c, 'a> {
+    fn append_alloca_class<'a>(&self, class_type: Type<'m>, block: &'a Block<'c>) -> Value<'c, 'a> {
         let size = block
             .append_operation(arith::constant(
                 &self.context,

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, ops::Deref, borrow::BorrowMut};
+use std::{borrow::BorrowMut, collections::HashMap, hash::Hash, ops::Deref};
 
 use crate::parser::{self, BaseType, Def, Node, Parser, ParserResult};
 
@@ -252,14 +252,33 @@ fn run_type_inference(
                         };
                     }
                     Node::Loop(loop_node) => {
-                        loop_node.body.iter_mut().for_each(|node| { match node {
-                            Node::Access(access_node) => visit_access_node(&attribute_index, &lvar_index, access_node),
-                            Node::Binary(node) => visit_binary_node(&attribute_index, &method_index, &lvar_index, node),
-                            Node::Call(node) => visit_call_node(&attribute_index, &method_index, &lvar_index, node),
-                            Node::Send(node) => visit_send_node(&attribute_index, &method_index, &lvar_index, node),
-                            _ => todo!(),
-                        }; });
-                    },
+                        loop_node.body.iter_mut().for_each(|node| {
+                            match node {
+                                Node::Access(access_node) => {
+                                    visit_access_node(&attribute_index, &lvar_index, access_node)
+                                }
+                                Node::Binary(node) => visit_binary_node(
+                                    &attribute_index,
+                                    &method_index,
+                                    &lvar_index,
+                                    node,
+                                ),
+                                Node::Call(node) => visit_call_node(
+                                    &attribute_index,
+                                    &method_index,
+                                    &lvar_index,
+                                    node,
+                                ),
+                                Node::Send(node) => visit_send_node(
+                                    &attribute_index,
+                                    &method_index,
+                                    &lvar_index,
+                                    node,
+                                ),
+                                _ => todo!(),
+                            };
+                        });
+                    }
                 })
             }
             _ => {}

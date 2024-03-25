@@ -1201,12 +1201,10 @@ impl<'a> Parser<'a> {
         let value = Box::new(self.parse_expr(mctx, ctx).unwrap());
 
         match receiver {
-            Node::Access(access) => {
-                Ok(Node::AssignAttributeAccess(AssignAttributeAccess {
-                            access,
-                            value,
-                        }))
-            },
+            Node::Access(access) => Ok(Node::AssignAttributeAccess(AssignAttributeAccess {
+                access,
+                value,
+            })),
             Node::AssignAttribute(_) => todo!(),
             Node::AssignAttributeAccess(_) => todo!(),
             Node::AssignLocalVar(_) => todo!(),
@@ -1324,7 +1322,7 @@ impl<'a> Parser<'a> {
 
         match self.current()? {
             Token::LCurlyBrace => self.advance()?,
-            _ => return Err("Expected a curly brace after loop")
+            _ => return Err("Expected a curly brace after loop"),
         }
 
         let mut body = vec![];

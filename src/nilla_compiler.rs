@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use melior::{Context, pass, ExecutionEngine};
 use melior::dialect::DialectRegistry;
 use melior::ir::{Location, Module};
-use melior::pass::{PassManager, conversion};
+use melior::pass::{conversion, PassManager};
 use melior::utility::{register_all_dialects, register_all_llvm_translations};
+use melior::{pass, Context, ExecutionEngine};
 
 use crate::lexer::Lexer;
 use crate::mlir_codegen::Compiler;
