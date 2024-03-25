@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash, ops::Deref};
+use std::{collections::HashMap, hash::Hash, ops::Deref, borrow::BorrowMut};
 
 use crate::parser::{self, BaseType, Def, Node, Parser, ParserResult};
 
@@ -113,22 +113,23 @@ fn run_type_inference(
                             Node::Access(access_node) => {
                                 visit_access_node(&attribute_index, &lvar_index, access_node)
                             }
+                            Node::AssignAttribute(_) => todo!(),
+                            Node::AssignAttributeAccess(_) => todo!(),
                             Node::AssignLocalVar(_) => todo!(),
                             Node::Attribute(_) => todo!(),
                             Node::Class(_) => todo!(),
+                            Node::Const(_) => todo!(),
                             Node::Def(_) => todo!(),
                             Node::DefE(_) => todo!(),
                             Node::Impl(_) => todo!(),
                             Node::Int(_) => todo!(),
-                            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
                             Node::LocalVar(_) => todo!(),
+                            Node::Loop(_) => todo!(),
                             Node::Module(_) => todo!(),
                             Node::Ret(_) => todo!(),
                             Node::SelfRef(_) => todo!(),
+                            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
                             Node::Trait(_) => todo!(),
-                            Node::AssignAttribute(_) => todo!(),
-                            Node::Const(_) => todo!(),
-                            Node::AssignAttributeAccess(_) => todo!(),
                         };
 
                         lvar_index.insert(assignlocalvar_node.name.clone(), return_type);
@@ -186,22 +187,23 @@ fn run_type_inference(
                             Node::Access(access_node) => {
                                 visit_access_node(&attribute_index, &lvar_index, access_node)
                             }
+                            Node::AssignAttribute(_) => todo!(),
+                            Node::AssignAttributeAccess(_) => todo!(),
                             Node::AssignLocalVar(_) => todo!(),
                             Node::Attribute(_) => todo!(),
                             Node::Class(_) => todo!(),
+                            Node::Const(_) => todo!(),
                             Node::Def(_) => todo!(),
                             Node::DefE(_) => todo!(),
                             Node::Impl(_) => todo!(),
                             Node::Int(_) => todo!(),
-                            Node::StringLiteral(_) => todo!(),
                             Node::LocalVar(lvar) => lvar.return_type.clone(),
+                            Node::Loop(_) => todo!(),
                             Node::Module(_) => todo!(),
                             Node::Ret(_) => todo!(),
                             Node::SelfRef(_) => todo!(),
+                            Node::StringLiteral(_) => todo!(),
                             Node::Trait(_) => todo!(),
-                            Node::AssignAttribute(_) => todo!(),
-                            Node::Const(_) => todo!(),
-                            Node::AssignAttributeAccess(_) => todo!(),
                         };
                     }
                     Node::Const(_) => todo!(),
@@ -230,24 +232,34 @@ fn run_type_inference(
                             Node::Access(access_node) => {
                                 visit_access_node(&attribute_index, &lvar_index, access_node)
                             }
+                            Node::AssignAttribute(_) => todo!(),
+                            Node::AssignAttributeAccess(_) => todo!(),
                             Node::AssignLocalVar(_) => todo!(),
                             Node::Attribute(_) => todo!(),
                             Node::Class(_) => todo!(),
+                            Node::Const(_) => todo!(),
                             Node::Def(_) => todo!(),
                             Node::DefE(_) => todo!(),
                             Node::Impl(_) => todo!(),
                             Node::Int(_) => todo!(),
-                            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
                             Node::LocalVar(lvar) => lvar.return_type.clone(),
+                            Node::Loop(_) => todo!(),
                             Node::Module(_) => todo!(),
                             Node::Ret(_) => todo!(),
                             Node::SelfRef(_) => todo!(),
+                            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
                             Node::Trait(_) => todo!(),
-                            Node::AssignAttribute(_) => todo!(),
-                            Node::Const(_) => todo!(),
-                            Node::AssignAttributeAccess(_) => todo!(),
                         };
                     }
+                    Node::Loop(loop_node) => {
+                        loop_node.body.iter_mut().for_each(|node| { match node {
+                            Node::Access(access_node) => visit_access_node(&attribute_index, &lvar_index, access_node),
+                            Node::Binary(node) => visit_binary_node(&attribute_index, &method_index, &lvar_index, node),
+                            Node::Call(node) => visit_call_node(&attribute_index, &method_index, &lvar_index, node),
+                            Node::Send(node) => visit_send_node(&attribute_index, &method_index, &lvar_index, node),
+                            _ => todo!(),
+                        }; });
+                    },
                 })
             }
             _ => {}
@@ -283,24 +295,25 @@ fn visit_access_node(
             nilla_class_name(&lvar.return_type.as_ref().unwrap())
         }
         Node::Access(_) => todo!(),
+        Node::AssignAttribute(_) => todo!(),
+        Node::AssignAttributeAccess(_) => todo!(),
         Node::AssignLocalVar(_) => todo!(),
         Node::Attribute(_) => todo!(),
         Node::Binary(_) => todo!(),
         Node::Call(_) => todo!(),
         Node::Class(_) => todo!(),
+        Node::Const(_) => todo!(),
         Node::Def(_) => todo!(),
         Node::DefE(_) => todo!(),
         Node::Impl(_) => todo!(),
         Node::Int(_) => todo!(),
-        Node::StringLiteral(_) => todo!(),
+        Node::Loop(_) => todo!(),
         Node::Module(_) => todo!(),
         Node::Ret(_) => todo!(),
         Node::SelfRef(self_ref) => nilla_class_name(&self_ref.return_type),
         Node::Send(_) => todo!(),
+        Node::StringLiteral(_) => todo!(),
         Node::Trait(_) => todo!(),
-        Node::AssignAttribute(_) => todo!(),
-        Node::Const(_) => todo!(),
-        Node::AssignAttributeAccess(_) => todo!(),
     };
 
     let attribute_name = match access_node.message.as_mut() {

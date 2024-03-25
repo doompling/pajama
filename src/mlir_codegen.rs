@@ -1,7 +1,8 @@
-use crate::parser::{AllocaClass, BaseType, Def, Node, Parser, ParserResult, ParserResultIndex};
+use crate::parser::{BaseType, Def, Node, ParserResult};
 use crate::{mi_malloc, parser};
 use melior::dialect::llvm::attributes::{linkage, Linkage};
 use melior::dialect::llvm::AllocaOptions;
+use melior::dialect::scf;
 use melior::dialect::{index, llvm, memref};
 use melior::ir::attribute::{
     ArrayAttribute, DenseElementsAttribute, DenseI32ArrayAttribute, DenseI64ArrayAttribute,
@@ -23,8 +24,10 @@ use melior::{
 };
 use melior::{pass, ExecutionEngine, StringRef};
 use std::array;
+use std::borrow::BorrowMut;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
+use train_map::TrainMap;
 
 #[no_mangle]
 pub fn print_int(int: i32) {
@@ -51,35 +54,33 @@ static EXTERNAL_FNS4: [fn(*const u8, i64); 1] = [print_bytes];
 
 /// Defines the `Expr` compiler.
 #[derive(Debug)]
-pub struct LlvmTypes<'ctx> {
+pub struct LlvmTypes<'c> {
     // pub parser_result: &'a ParserResult,
-    pub i8_type: Type<'ctx>,
-    pub i8_ptr_type: Type<'ctx>,
-    pub i8_array_type: Type<'ctx>,
-    pub i8_array_ptr_type: Type<'ctx>,
-    pub i64_type: Type<'ctx>,
-    pub struct_type: Type<'ctx>,
-    pub struct_ptr_type: Type<'ctx>,
-    pub ptr_type: Type<'ctx>,
+    pub i8_type: Type<'c>,
+    pub i8_ptr_type: Type<'c>,
+    pub i8_array_type: Type<'c>,
+    pub i8_array_ptr_type: Type<'c>,
+    pub i64_type: Type<'c>,
+    pub struct_type: Type<'c>,
+    pub struct_ptr_type: Type<'c>,
+    pub ptr_type: Type<'c>,
 }
 
 /// Defines the `Expr` compiler.
 #[derive(Debug)]
-pub struct Compiler<'a, 'ctx> {
-    pub parser_result: &'a ParserResult,
-    pub context: &'ctx Context,
-    pub mlir_module: &'a Module<'ctx>,
-    pub llvm_types: LlvmTypes<'ctx>,
-    class_type_index: HashMap<String, Type<'ctx>>,
+pub struct Compiler<'c, 'm> {
+    pub parser_result: &'c ParserResult,
+    pub context: &'m Context,
+    pub module: &'c Module<'m>,
+    pub llvm_types: LlvmTypes<'c>,
+    pub class_type_index: HashMap<String, Type<'m>>,
+
+    // pub llvm_types: LlvmTypes<'m>,
+    // pub class_type_index: HashMap<String, Type<'m>>,
+
     // pub parser_index: &'a ParserResultIndex,
     // pub class_ids: BTreeMap<String, u64>,
     // pub fn_value_opt: Option<FunctionValue<'ctx>>,
-}
-
-#[derive(Debug)]
-pub struct Ctx<'ctx, 'a> {
-    pub lvars: HashMap<String, Value<'ctx, 'a>>,
-    pub lvar_stores: HashMap<String, Value<'ctx, 'a>>,
 }
 
 #[derive(Debug)]
@@ -87,32 +88,24 @@ pub struct ModuleCtx {
     pub global_var_counter: i32,
 }
 
-impl<'a, 'ctx> Compiler<'a, 'ctx> {
-    pub fn compile(parser_result: &ParserResult) {
-        let registry = DialectRegistry::new();
-        register_all_dialects(&registry);
+#[derive(Debug)]
+pub struct FnCtx<'c, 'a> {
+    pub lvars: HashMap<String, Value<'c, 'a>>,
+    pub lvar_stores: HashMap<String, Value<'c, 'a>>,
+}
 
-        let context = Context::new();
-        context.append_dialect_registry(&registry);
-        context.load_all_available_dialects();
-        register_all_llvm_translations(&context);
-
-        // temp for development
-        context.attach_diagnostic_handler(|diagnostic| {
-            eprintln!("{}", diagnostic);
-            true
-        });
-
-        let i8_type = IntegerType::new(&context, 8).into();
+impl<'c, 'm> Compiler<'c, 'm> {
+    pub fn new(context: &'c Context, module: &'m Module<'c>, parser_result: &'m ParserResult) -> Self {
+        let i8_type = IntegerType::new(context, 8).into();
         let i8_ptr_type = llvm::r#type::r#pointer(i8_type, 0);
         let i8_array_type = llvm::r#type::array(i8_type, 5);
         let i8_array_ptr_type = llvm::r#type::r#pointer(i8_array_type, 0);
-        let i64_type = IntegerType::new(&context, 64);
+        let i64_type = IntegerType::new(context, 64);
 
         let struct_fields = [i8_ptr_type.into(), i64_type.into(), i64_type.into()];
-        let struct_type = llvm::r#type::r#struct(&context, &struct_fields, false);
+        let struct_type = llvm::r#type::r#struct(context, &struct_fields, false);
         let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
-        let ptr_type = llvm::r#type::opaque_pointer(&context);
+        let ptr_type = llvm::r#type::opaque_pointer(context);
 
         let llvm_types = LlvmTypes {
             i8_type,
@@ -125,94 +118,159 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             ptr_type,
         };
 
-        let location = Location::unknown(&context);
-        let mut mlir_module = Module::new(location);
-
         let mut class_type_index = HashMap::new();
-
         for (_, class) in &parser_result.index.class_index {
             let mut struct_fields = vec![];
 
             for attribute in &class.attributes {
                 if let Node::Attribute(attribute) = attribute {
                     struct_fields.push(match attribute.return_type {
-                        BaseType::BytePtr => i8_ptr_type,
-                        BaseType::Int => i64_type.into(),
+                        BaseType::BytePtr => llvm_types.i8_ptr_type,
+                        BaseType::Int => llvm_types.i64_type.into(),
                         BaseType::Void => todo!(),
-                        BaseType::Class(_) => ptr_type,
+                        BaseType::Class(_) => llvm_types.ptr_type,
                     });
                 }
             }
 
-            let struct_type = llvm::r#type::r#struct(&context, &struct_fields, false);
-
+            let struct_type = llvm::r#type::r#struct(context, &struct_fields, false);
             class_type_index.insert(class.name.clone(), struct_type);
         }
 
-        let mut compiler = Compiler {
-            parser_result: &parser_result,
-            context: &context,
-            mlir_module: &mlir_module,
+        Self {
+            context,
+            module,
+            parser_result,
             llvm_types,
-            class_type_index,
-        };
+            class_type_index
+        }
+    }
 
-        compiler.compile_ast();
+    pub fn compile(&mut self) -> Result<(), &'static str> {
+        // let registry = DialectRegistry::new();
+        // register_all_dialects(&registry);
 
-        println!("PRE VERIFICATION:");
-        println!("{}", mlir_module.body().to_string());
+        // let context = Context::new();
+        // context.append_dialect_registry(&registry);
+        // context.load_all_available_dialects();
+        // register_all_llvm_translations(&context);
 
-        assert!(mlir_module.as_operation().verify());
+        // // temp for development
+        // context.attach_diagnostic_handler(|diagnostic| {
+        //     eprintln!("{}", diagnostic);
+        //     true
+        // });
 
-        let pass_manager = PassManager::new(&context);
-        pass_manager.add_pass(pass::conversion::create_func_to_llvm());
+        // let i8_type = IntegerType::new(&self.context, 8).into();
+        // let i8_ptr_type = llvm::r#type::r#pointer(i8_type, 0);
+        // let i8_array_type = llvm::r#type::array(i8_type, 5);
+        // let i8_array_ptr_type = llvm::r#type::r#pointer(i8_array_type, 0);
+        // let i64_type = IntegerType::new(&self.context, 64);
 
-        pass_manager
-            .nested_under("func.func")
-            .add_pass(pass::conversion::create_arith_to_llvm());
-        pass_manager
-            .nested_under("func.func")
-            .add_pass(pass::conversion::create_index_to_llvm());
-        pass_manager.add_pass(pass::conversion::create_scf_to_control_flow());
-        pass_manager.add_pass(pass::conversion::create_control_flow_to_llvm());
-        pass_manager.add_pass(pass::conversion::create_finalize_mem_ref_to_llvm());
+        // let struct_fields = [i8_ptr_type.into(), i64_type.into(), i64_type.into()];
+        // let struct_type = llvm::r#type::r#struct(&self.context, &struct_fields, false);
+        // let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
+        // let ptr_type = llvm::r#type::opaque_pointer(&self.context);
 
-        pass_manager.add_pass(pass::conversion::create_func_to_llvm());
+        // let llvm_types = LlvmTypes {
+        //     i8_type,
+        //     i8_ptr_type,
+        //     i8_array_type,
+        //     i8_array_ptr_type,
+        //     struct_type,
+        //     struct_ptr_type,
+        //     i64_type: i64_type.into(),
+        //     ptr_type,
+        // };
 
-        pass_manager.run(&mut mlir_module).unwrap();
+        // let location = Location::unknown(&context);
+        // let mut module = Module::new(location);
 
-        assert!(mlir_module.as_operation().verify());
+        // let mut class_type_index = HashMap::new();
+        // for (_, class) in &self.parser_result.index.class_index {
+        //     let mut struct_fields = vec![];
 
-        // let engine = ExecutionEngine::new(&mlir_module, 2, &[], false);
-        let engine = ExecutionEngine::new(&mlir_module, 2, &[], false);
+        //     for attribute in &class.attributes {
+        //         if let Node::Attribute(attribute) = attribute {
+        //             struct_fields.push(match attribute.return_type {
+        //                 BaseType::BytePtr => self.llvm_types.i8_ptr_type,
+        //                 BaseType::Int => self.llvm_types.i64_type.into(),
+        //                 BaseType::Void => todo!(),
+        //                 BaseType::Class(_) => self.llvm_types.ptr_type,
+        //             });
+        //         }
+        //     }
 
-        // let mut argument = 42;
-        // let mut argument2 = 42;
-        // let mut result = -1;
-
-        println!("POST:");
-        println!("{}", mlir_module.body().to_string());
-
-        // unsafe {
-        //     engine.invoke_packed(
-        //         "add",
-        //         &mut [
-        //             &mut argument as *mut i32 as *mut (),
-        //             &mut argument2 as *mut i32 as *mut (),
-        //             &mut result as *mut i32 as *mut (),
-        //         ],
-        //     ).unwrap();
-
-        //     println!("result: {:#?}", result);
+        //     let struct_type = llvm::r#type::r#struct(&self.context, &struct_fields, false);
+        //     class_type_index.insert(class.name.clone(), struct_type);
         // }
 
-        let mut status_code = 0;
+        // let mut compiler = Compiler {
+        //     parser_result: &parser_result,
+        //     context: &context,
+        //     module: &module,
+        //     llvm_types,
+        //     class_type_index,
+        // };
 
-        unsafe {
-            engine
-                .invoke_packed("main", &mut [&mut status_code as *mut i32 as *mut ()])
-                .unwrap();
-        }
+        self.compile_ast();
+
+        // println!("PRE VERIFICATION:");
+        // println!("{}", self.module.body().to_string());
+
+        // assert!(self.module.as_operation().verify());
+
+        // let pass_manager = PassManager::new(&self.context);
+        // pass_manager.add_pass(pass::conversion::create_func_to_llvm());
+
+        // pass_manager
+        //     .nested_under("func.func")
+        //     .add_pass(pass::conversion::create_arith_to_llvm());
+        // pass_manager
+        //     .nested_under("func.func")
+        //     .add_pass(pass::conversion::create_index_to_llvm());
+        // pass_manager.add_pass(pass::conversion::create_scf_to_control_flow());
+        // pass_manager.add_pass(pass::conversion::create_control_flow_to_llvm());
+        // pass_manager.add_pass(pass::conversion::create_finalize_mem_ref_to_llvm());
+
+        // pass_manager.add_pass(pass::conversion::create_func_to_llvm());
+
+        // pass_manager.run(self.module.borrow_mut()).unwrap();
+
+        // assert!(self.module.as_operation().verify());
+
+        // // let engine = ExecutionEngine::new(&module, 2, &[], false);
+        // let engine = ExecutionEngine::new(&self.module, 2, &[], false);
+
+        // // let mut argument = 42;
+        // // let mut argument2 = 42;
+        // // let mut result = -1;
+
+        // println!("POST:");
+        // println!("{}", self.module.body().to_string());
+
+        // // unsafe {
+        // //     engine.invoke_packed(
+        // //         "add",
+        // //         &mut [
+        // //             &mut argument as *mut i32 as *mut (),
+        // //             &mut argument2 as *mut i32 as *mut (),
+        // //             &mut result as *mut i32 as *mut (),
+        // //         ],
+        // //     ).unwrap();
+
+        // //     println!("result: {:#?}", result);
+        // // }
+
+        // let mut status_code = 0;
+
+        // unsafe {
+        //     engine
+        //         .invoke_packed("main", &mut [&mut status_code as *mut i32 as *mut ()])
+        //         .unwrap();
+        // }
+
+        Ok(())
     }
 
     fn compile_ast(&mut self) {
@@ -235,24 +293,25 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             match &node {
                 Node::Def(def) => self.compile_def(def, &mut mctx),
                 Node::DefE(def_e) => self.compile_external_fn(def_e),
-                Node::Ret(ret) => todo!(),
                 Node::Access(_) => todo!(),
+                Node::AssignAttribute(_) => todo!(),
+                Node::AssignAttributeAccess(_) => todo!(),
                 Node::AssignLocalVar(_) => todo!(),
                 Node::Attribute(_) => todo!(),
                 Node::Binary(_) => todo!(),
                 Node::Call(_) => todo!(),
+                Node::Class(_) => panic!("Classes are not directly compiled"),
+                Node::Const(_) => todo!(),
                 Node::Impl(_) => todo!(),
                 Node::Int(_) => todo!(),
-                Node::StringLiteral(_) => todo!(),
                 Node::LocalVar(_) => todo!(),
+                Node::Loop(_) => todo!(),
                 Node::Module(_) => todo!(),
+                Node::Ret(_) => todo!(),
                 Node::SelfRef(_) => todo!(),
                 Node::Send(_) => todo!(),
+                Node::StringLiteral(_) => todo!(),
                 Node::Trait(_) => todo!(),
-                Node::Class(class) => panic!("Classes are not directly compiled"),
-                Node::AssignAttribute(_) => todo!(),
-                Node::Const(_) => todo!(),
-                Node::AssignAttributeAccess(_) => todo!(),
             }
         }
     }
@@ -335,7 +394,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             location,
         );
 
-        self.mlir_module.body().append_operation(operation);
+        self.module.body().append_operation(operation);
     }
 
     fn compile_external_fn(&mut self, node: &parser::DefE) {
@@ -375,14 +434,14 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             location,
         );
 
-        self.mlir_module.body().append_operation(operation);
+        self.module.body().append_operation(operation);
     }
 
     fn compile_fn_body(
         &mut self,
         node: &parser::Def,
         mctx: &mut ModuleCtx,
-    ) -> Result<Region<'ctx>, &'static str> {
+    ) -> Result<Region<'c>, &'static str> {
         let mut inputs = vec![];
         for arg in node.prototype.args.iter() {
             match &arg.return_type {
@@ -406,8 +465,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         }
 
         let block = Block::new(&inputs);
-        let region = Region::new();
-        let mut ctx = Ctx {
+        let mut ctx = FnCtx {
             lvars: HashMap::new(),
             lvar_stores: HashMap::new(),
         };
@@ -439,7 +497,8 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let last_op_index = node.body.len();
 
         for (i, body_node) in node.body.iter().enumerate() {
-            let return_val = match self.compile_expr(&block, body_node, &mut ctx, mctx) {
+            let compiled_expr = self.compile_expr(&block, body_node, &mut ctx, mctx);
+            let return_val = match compiled_expr {
                 Ok(ret_val) => ret_val,
                 Err(e) => return Err(e),
             };
@@ -496,18 +555,19 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             }
         }
 
+        let region = Region::new();
         region.append_block(block);
 
         Ok(region)
     }
 
-    fn compile_expr(
+    fn compile_expr<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         expr: &Node,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         match *&expr {
             Node::Access(node) => self.compile_attribute_access(block, node, ctx, mctx),
             Node::AssignAttribute(node) => self.compile_assign_attribute(block, node, ctx, mctx),
@@ -520,29 +580,30 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::Binary(binary) => self.compile_binary(block, binary, ctx, mctx),
             Node::Call(call) => self.compile_call(block, call, ctx, mctx),
             Node::Int(nb) => self.compile_int(block, nb),
-            Node::StringLiteral(string) => self.compile_string_literal(block, string, ctx, mctx),
             Node::LocalVar(lvar) => self.compile_local_var(block, lvar, ctx, mctx),
+            Node::Loop(node) => self.compile_loop(block, node, ctx, mctx),
             Node::Ret(ret) => self.compile_return(block, ret, ctx, mctx),
             Node::SelfRef(lvar) => self.compile_self_ref(block, lvar),
             Node::Send(node) => self.compile_send(block, node, ctx, mctx),
+            Node::StringLiteral(string) => self.compile_string_literal(block, string, ctx, mctx),
             Node::Attribute(_) => panic!("Syntax error"),
             Node::Class(_) => panic!("Syntax error"),
+            Node::Const(_) => todo!(),
             Node::Def(_) => panic!("Syntax error"),
             Node::DefE(_) => panic!("Syntax error"),
             Node::Impl(_) => panic!("Syntax error"),
             Node::Module(_) => panic!("Syntax error"),
             Node::Trait(_) => panic!("Syntax error"),
-            Node::Const(_) => todo!(),
         }
     }
 
-    fn compile_attribute_access(
+    fn compile_attribute_access<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         access: &parser::Access,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let value = match &*access.receiver {
             Node::LocalVar(lvar) => {
                 let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
@@ -643,13 +704,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(Some(value.result(0).unwrap().into()))
     }
 
-    fn compile_send(
+    fn compile_send<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         send_node: &parser::Send,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let call_node = match send_node.message.as_ref() {
             Node::Call(call_node) => call_node,
             _ => return Err("Expected send_node message to be a Call"),
@@ -781,21 +842,21 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         }
     }
 
-    fn compile_self_ref(
+    fn compile_self_ref<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         lvar: &parser::SelfRef,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         todo!()
     }
 
-    fn compile_call(
+    fn compile_call<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         call: &parser::Call,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let location = Location::unknown(&self.context);
 
         let mut inputs = vec![];
@@ -871,11 +932,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         }
     }
 
-    fn compile_int(
+    fn compile_int<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         nb: &parser::Int,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let value = block
             .append_operation(arith::constant(
                 &self.context,
@@ -890,20 +951,20 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(Some(value))
     }
 
-    fn compile_string_literal(
+    fn compile_string_literal<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         string: &parser::StringLiteral,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let string_attr = StringAttribute::new(&self.context, &string.value);
         let i8_array_type = llvm::r#type::array(self.llvm_types.i8_type, string.value.len() as u32);
 
         let region = Region::new();
         let temp_name = mctx.global_var_counter.to_string();
 
-        self.mlir_module.body().append_operation(llvm::global(
+        self.module.body().append_operation(llvm::global(
             &self.context,
             StringAttribute::new(&self.context, temp_name.as_str()),
             Some(string_attr.into()),
@@ -1004,7 +1065,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 
         let temp_name = mctx.global_var_counter.to_string();
 
-        self.mlir_module.body().append_operation(llvm::global(
+        self.module.body().append_operation(llvm::global(
             &self.context,
             StringAttribute::new(&self.context, temp_name.as_str()),
             None,
@@ -1029,23 +1090,23 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         return Ok(Some(struct_addressof_op));
     }
 
-    fn compile_binary(
+    fn compile_binary<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         binary: &parser::Binary,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         todo!()
     }
 
-    fn compile_local_var(
+    fn compile_local_var<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         lvar: &parser::LocalVar,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         match ctx.lvars.get(&lvar.name) {
             Some(value) => return Ok(Some(*value)),
             None => todo!(),
@@ -1066,13 +1127,129 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(Some(loaded_val))
     }
 
-    fn compile_assign_attribute_access(
+    fn compile_loop<'a>(
         &self,
-        block: &'a Block<'ctx>,
-        assignment: &parser::AssignAttributeAccess,
-        ctx: &mut Ctx<'ctx, 'a>,
+        block: &'a Block<'c>,
+        loop_node: &parser::Loop,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
+        let location = Location::unknown(&self.context);
+        let index_type = Type::index(&self.context);
+
+        let initial = block.append_operation(arith::constant(
+            &self.context,
+            // IntegerAttribute::new(index_type, 1).into(),
+            IntegerAttribute::new(IntegerType::new(&self.context, 1).into(), 1).into(),
+            location,
+        ));
+
+        block.append_operation(scf::r#while(
+            &[],
+            &[],
+            {
+                let before_block = Block::new(&[]);
+
+                // let condition = block.append_operation(arith::constant(
+                //     &self.context,
+                //     IntegerAttribute::new(IntegerType::new(&self.context, 1).into(), 0)
+                //         .into(),
+                //     location,
+                // ));
+
+                // let result = block.append_operation(arith::constant(
+                //     &self.context,
+                //     IntegerAttribute::new(Type::index(&self.context), 42).into(),
+                //     location,
+                // ));
+
+                before_block.append_operation(scf::condition(
+                    // arith::constant( &self.context, IntegerAttribute::new(IntegerType::new(&self.context, 1).into(), 0)).into()
+                    initial.result(0).unwrap().into(),
+                    &[],
+                    location,
+                ));
+
+                let region = Region::new();
+                region.append_block(before_block);
+                region
+            },
+            {
+                self.compile_block(&loop_node.body, mctx)?
+            },
+            location,
+        ));
+
+        Ok(None)
+    }
+
+    fn compile_block(
+        &self,
+        nodes: &Vec<Node>,
+        // ctx: &mut FnCtx<'c, 'm>,
+        mctx: &mut ModuleCtx,
+    ) -> Result<Region<'c>, &'static str> {
+        let builder = Block::new(&[]);
+
+        let mut block_ctx = FnCtx {
+            lvars: HashMap::new(),
+            lvar_stores: HashMap::new(),
+        };
+
+        nodes.iter().for_each(|node| {
+            self.compile_expr(&builder, node, &mut block_ctx, mctx);
+        });
+
+        builder.append_operation(scf::r#yield(
+            &[],
+            Location::unknown(&self.context),
+        ));
+
+        let region = Region::new();
+        region.append_block(builder);
+        Ok(region)
+    }
+
+// let builder = Block::new(&[]);
+        // let mut variables = variables.fork();
+
+        // let r#type =
+            // self.compile_statements(&builder, &block.stmts, function_scope, &mut variables)?;
+
+            // let after_block = Block::new(&[]);
+
+            // // for node in loop_node.body.iter() {
+            // //     self.compile_expr(&after_block, node, ctx, mctx);
+            // // }
+
+            // nodes.iter().for_each(|node| {
+            //     self.compile_expr(&after_block, node, ctx, mctx);
+            // });
+
+
+            // //     match self.compile_expr(&after_block, node, &mut ctx, mctx) {
+            // //     Ok(ret_val) => ret_val,
+            // //     // Err(e) => return Err(e),
+            // //     Err(e) => panic!("Waaah"),
+            // // });
+
+            // // after_block.append_operation(scf::r#yield(
+            // //     &[],
+            // //     location,
+            // // ));
+
+            // let region = Region::new();
+            // region.append_block(after_block);
+            // Ok(region)
+    // }
+
+    fn compile_assign_attribute_access<'a>(
+        &self,
+        block: &'a Block<'c>,
+        assignment: &parser::AssignAttributeAccess,
+        ctx: &mut FnCtx<'c, 'a>,
+        mctx: &mut ModuleCtx,
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let return_val = match self.compile_expr(&block, &assignment.value, ctx, mctx) {
             Ok(ret_val) => ret_val,
             Err(e) => return Err(e),
@@ -1108,6 +1285,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Node::AssignAttribute(_) => todo!(),
             Node::AssignAttributeAccess(_) => todo!(),
             Node::Const(_) => todo!(),
+            Node::Loop(_) => todo!(),
         };
 
         // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
@@ -1246,13 +1424,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         todo!()
     }
 
-    fn compile_assign_attribute(
+    fn compile_assign_attribute<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         asgn_attr: &parser::AssignAttribute,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
 
         let return_val =
@@ -1308,39 +1486,40 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(Some(return_val))
     }
 
-    fn compile_assign_local_var(
+    fn compile_assign_local_var<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         asgn_lvar: &parser::AssignLocalVar,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let return_val = match self.compile_expr(&block, &asgn_lvar.value, ctx, mctx) {
             Ok(ret_val) => ret_val,
             Err(e) => return Err(e),
         };
 
         let return_type = match asgn_lvar.value.as_ref() {
+            Node::Send(send_node) => send_node.return_type.clone(),
+            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
             Node::Access(_) => todo!(),
+            Node::AssignAttribute(_) => todo!(),
+            Node::AssignAttributeAccess(_) => todo!(),
             Node::AssignLocalVar(_) => todo!(),
             Node::Attribute(_) => todo!(),
             Node::Binary(_) => todo!(),
             Node::Call(_) => todo!(),
             Node::Class(_) => todo!(),
+            Node::Const(_) => todo!(),
             Node::Def(_) => todo!(),
             Node::DefE(_) => todo!(),
             Node::Impl(_) => todo!(),
             Node::Int(_) => todo!(),
-            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
             Node::LocalVar(_) => todo!(),
+            Node::Loop(_) => todo!(),
             Node::Module(_) => todo!(),
             Node::Ret(_) => todo!(),
             Node::SelfRef(_) => todo!(),
-            Node::Send(send_node) => send_node.return_type.clone(),
             Node::Trait(_) => todo!(),
-            Node::AssignAttribute(_) => todo!(),
-            Node::Const(_) => todo!(),
-            Node::AssignAttributeAccess(_) => todo!(),
         };
 
         match &return_type {
@@ -1371,11 +1550,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(return_val)
     }
 
-    fn append_alloca_store(
+    fn append_alloca_store<'a>(
         &self,
-        value: Value<'ctx, '_>,
-        block: &'a Block<'ctx>,
-    ) -> Value<'ctx, 'a> {
+        value: Value<'m, '_>,
+        block: &'a Block<'c>,
+    ) -> Value<'c, 'a> {
         let size = block
             .append_operation(arith::constant(
                 &self.context,
@@ -1411,11 +1590,11 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         ptr
     }
 
-    fn append_alloca_class(
+    fn append_alloca_class<'a>(
         &self,
-        class_type: Type<'ctx>,
-        block: &'a Block<'ctx>,
-    ) -> Value<'ctx, 'a> {
+        class_type: Type<'m>,
+        block: &'a Block<'c>,
+    ) -> Value<'c, 'a> {
         let size = block
             .append_operation(arith::constant(
                 &self.context,
@@ -1442,13 +1621,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             .into()
     }
 
-    fn compile_return(
+    fn compile_return<'a>(
         &self,
-        block: &'a Block<'ctx>,
+        block: &'a Block<'c>,
         ret: &parser::Ret,
-        ctx: &mut Ctx<'ctx, 'a>,
+        ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
-    ) -> Result<Option<Value<'ctx, 'a>>, &'static str> {
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let return_val = match self.compile_expr(&block, &ret.value, ctx, mctx) {
             Ok(ret_val) => ret_val,
             Err(e) => return Err(e),
@@ -1457,7 +1636,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         Ok(return_val)
     }
 
-    fn basetype_to_mlir_type(&self, return_type: &BaseType) -> Type<'ctx> {
+    fn basetype_to_mlir_type(&self, return_type: &BaseType) -> Type<'c> {
         match return_type {
             BaseType::Int => IntegerType::new(&self.context, 64).into(),
             BaseType::Void => todo!(),

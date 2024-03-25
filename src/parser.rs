@@ -132,41 +132,29 @@ pub struct Const {
 }
 
 #[derive(Debug)]
-pub struct AllocaClass {
-    pub class_name: String,
-}
-
-#[derive(Debug)]
 pub enum Node {
     Access(Access),
+    AssignAttribute(AssignAttribute),
+    AssignAttributeAccess(AssignAttributeAccess),
     AssignLocalVar(AssignLocalVar),
     Attribute(Attribute),
     Binary(Binary),
     Call(Call),
     Class(Class),
+    Const(Const),
     Def(Def),
     DefE(DefE),
     Impl(Impl),
     Int(Int),
-    StringLiteral(StringLiteral),
     LocalVar(LocalVar),
+    Loop(Loop),
     Module(Module),
     Ret(Ret),
     SelfRef(SelfRef),
     Send(Send),
+    StringLiteral(StringLiteral),
     Trait(Trait),
-    AssignAttribute(AssignAttribute),
-    AssignAttributeAccess(AssignAttributeAccess),
-    Const(Const),
-    // AllocaClass(AllocaClass),
 }
-
-// impl Node {
-//   pub(crate) fn inner_ref(&self) -> String {
-//     match &self {
-//         Node::(inner) => inner,
-//     }
-// }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BaseType {
@@ -215,6 +203,11 @@ pub struct Def {
 #[derive(Debug)]
 pub struct DefE {
     pub prototype: Prototype,
+}
+
+#[derive(Debug)]
+pub struct Loop {
+    pub body: Vec<Node>,
 }
 
 #[derive(Debug)]
@@ -930,13 +923,14 @@ impl<'a> Parser<'a> {
 
         let node = match self.curr() {
             Token::Attribute(_, _) => self.parse_attribute_expr(mctx, ctx),
+            Token::Const(_, _) => self.parse_const_expr(),
             Token::Ident(_, _) => self.parse_ident_expr(mctx, ctx),
+            Token::Loop => self.parse_loop_expr(mctx, ctx),
             Token::LParen => self.parse_paren_expr(mctx, ctx),
             Token::Number(_, _) => self.parse_nb_expr(),
             Token::Ret => self.parse_ret_expr(mctx, ctx),
             Token::SelfRef => self.parse_self_ref_expr(mctx, ctx),
             Token::StringLiteral(_, _) => self.parse_string_expr(),
-            Token::Const(_, _) => self.parse_const_expr(),
             _ => {
                 panic!("{:#?}", self.curr());
                 panic!("{:#?}", self);
@@ -1207,29 +1201,32 @@ impl<'a> Parser<'a> {
         let value = Box::new(self.parse_expr(mctx, ctx).unwrap());
 
         match receiver {
-            Node::Access(access) => Ok(Node::AssignAttributeAccess(AssignAttributeAccess {
-                access,
-                value,
-            })),
+            Node::Access(access) => {
+                Ok(Node::AssignAttributeAccess(AssignAttributeAccess {
+                            access,
+                            value,
+                        }))
+            },
+            Node::AssignAttribute(_) => todo!(),
+            Node::AssignAttributeAccess(_) => todo!(),
             Node::AssignLocalVar(_) => todo!(),
             Node::Attribute(_) => todo!(),
             Node::Binary(_) => todo!(),
             Node::Call(_) => todo!(),
             Node::Class(_) => todo!(),
+            Node::Const(_) => todo!(),
             Node::Def(_) => todo!(),
             Node::DefE(_) => todo!(),
             Node::Impl(_) => todo!(),
             Node::Int(_) => todo!(),
-            Node::StringLiteral(_) => todo!(),
             Node::LocalVar(_) => todo!(),
+            Node::Loop(_) => todo!(),
             Node::Module(_) => todo!(),
             Node::Ret(_) => todo!(),
             Node::SelfRef(_) => todo!(),
             Node::Send(_) => todo!(),
+            Node::StringLiteral(_) => todo!(),
             Node::Trait(_) => todo!(),
-            Node::AssignAttribute(_) => todo!(),
-            Node::AssignAttributeAccess(_) => todo!(),
-            Node::Const(_) => todo!(),
         }
     }
 
@@ -1315,6 +1312,40 @@ impl<'a> Parser<'a> {
         };
 
         Ok(expr)
+    }
+
+    fn parse_loop_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
+        self.pos += 1; // Advance past 'loop' keyword
+        self.advance_optional_whitespace();
+
+        match self.current()? {
+            Token::LCurlyBrace => self.advance()?,
+            _ => return Err("Expected a curly brace after loop")
+        }
+
+        let mut body = vec![];
+
+        loop {
+            self.advance_optional_whitespace();
+
+            match self.current()? {
+                Token::RCurlyBrace => {
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    body.push(self.parse_expr(mctx, &ctx)?);
+                }
+            }
+        }
+
+        let loop_node = Loop { body };
+
+        Ok(Node::Loop(loop_node))
     }
 
     /// Parses a binary expression, given its left-hand expression.
