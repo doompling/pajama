@@ -13,6 +13,6 @@ use mimalloc_rust::GlobalMiMalloc;
 static GLOBAL_MIMALLOC: GlobalMiMalloc = GlobalMiMalloc;
 
 pub fn main() {
-    let input = std::fs::read_to_string("dev.nla").unwrap();
+    let input = std::fs::read_to_string("dev.pjs").unwrap();
     PajamaCompiler::compile(&input);
 }
