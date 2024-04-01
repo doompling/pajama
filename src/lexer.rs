@@ -26,17 +26,21 @@ pub enum Token {
     LCurlyBrace,
     Loop,
     LParen,
+    LSquareBrace,
     NewLine(usize),
     Number(TokenPosition, u64),
     Op(char),
     RCurlyBrace,
     Ret,
     RParen,
+    RSquareBrace,
     SelfRef,
     Space(usize),
     StringLiteral(TokenPosition, String),
+    Comment(TokenPosition, String),
     Trait,
     Unary,
+    Struct,
 }
 
 pub struct Lexer<'a> {
@@ -83,6 +87,33 @@ impl Lexer<'_> {
         pos += 1;
 
         let token = match ch {
+            '#' => {
+                let mut token_pos = TokenPosition {
+                    line: self.line_pos,
+                    start_column: self.column_pos,
+                    end_column: self.column_pos,
+                };
+
+                loop {
+                    let ch = self.chars.next();
+
+                    self.column_pos += 1;
+                    pos += 1;
+
+                    let ch = match ch {
+                        Some(ch) => ch,
+                        None => break,
+                    };
+
+                    if let '\n' = ch {
+                        break;
+                    }
+                }
+
+                token_pos.end_column = self.column_pos;
+
+                Token::Comment(token_pos, src[start..pos].to_string())
+            }
             ' ' => {
                 let mut whitespace_length = 1;
 
@@ -133,6 +164,8 @@ impl Lexer<'_> {
             }
             '(' => Token::LParen,
             ')' => Token::RParen,
+            '[' => Token::LSquareBrace,
+            ']' => Token::RSquareBrace,
             '{' => Token::LCurlyBrace,
             '}' => Token::RCurlyBrace,
             ',' => Token::Comma,
@@ -165,7 +198,7 @@ impl Lexer<'_> {
                 Token::StringLiteral(token_pos, src[start + 1..pos - 1].to_string())
             }
 
-            '1'..='9' => {
+            '0'..='9' => {
                 let mut token_pos = TokenPosition {
                     line: self.line_pos,
                     start_column: self.column_pos,
@@ -215,7 +248,7 @@ impl Lexer<'_> {
                     };
 
                     match ch {
-                        'a'..='z' | 'A'..='Z' | '0'..='9' => {}
+                        'a'..='z' | 'A'..='Z' | '0'..='9' | '_'  => {}
                         _ => break,
                     }
 
@@ -271,6 +304,7 @@ impl Lexer<'_> {
                     "loop" => Token::Loop,
                     "ret" => Token::Ret,
                     "self" => Token::SelfRef,
+                    "struct" => Token::Struct,
                     "trait" => Token::Trait,
                     "unary" => Token::Unary,
                     ident => {

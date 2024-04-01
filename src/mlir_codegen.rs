@@ -29,7 +29,31 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 
 #[no_mangle]
-pub fn print_int(int: i32) {
+#[derive(Debug)]
+#[repr(C)]
+struct InAddr {
+    s_addr: i32,
+}
+
+#[no_mangle]
+#[derive(Debug)]
+#[repr(C)]
+struct SockaddrIn {
+   sin_len:    i8,       // length of structure (16)
+   sin_family: i8,       // AF_INET
+   sin_port:   i16,      // 16-bit TCP or UDP port number (network byte ordered)
+   sin_addr:   InAddr,     // 32-bit IPv4 address (network byte ordered)
+   sin_zero:   [i8; 8], // unused
+}
+
+
+#[no_mangle]
+pub fn print_class(class: SockaddrIn) {
+    unsafe{ println!("print_class: {:#?}", class) };
+}
+
+#[no_mangle]
+pub fn print_int(int: i64) {
     println!("print_int: {:#?}", int);
 }
 
@@ -47,22 +71,25 @@ pub fn print_bytes(bytes: *const u8, len: i64) {
 }
 
 #[used]
-static EXTERNAL_FNS3: [fn(i32); 1] = [print_int];
+static EXTERNAL_FNS3: [fn(i64); 1] = [print_int];
 #[used]
 static EXTERNAL_FNS4: [fn(*const u8, i64); 1] = [print_bytes];
+#[used]
+static EXTERNAL_FNS5: [fn(SockaddrIn); 1] = [print_class];
 
 /// Defines the `Expr` compiler.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LlvmTypes<'c> {
-    // pub parser_result: &'a ParserResult,
     pub i8_type: Type<'c>,
+    pub i16_type: Type<'c>,
+    pub i32_type: Type<'c>,
+    pub i64_type: Type<'c>,
     pub i8_ptr_type: Type<'c>,
     pub i8_array_type: Type<'c>,
     pub i8_array_ptr_type: Type<'c>,
-    pub i64_type: Type<'c>,
-    pub struct_type: Type<'c>,
-    pub struct_ptr_type: Type<'c>,
     pub ptr_type: Type<'c>,
+    pub struct_ptr_type: Type<'c>,
+    pub struct_type: Type<'c>,
 }
 
 /// Defines the `Expr` compiler.
@@ -73,6 +100,7 @@ pub struct Compiler<'c, 'm> {
     pub module: &'c Module<'m>,
     pub llvm_types: LlvmTypes<'c>,
     pub class_type_index: HashMap<String, Type<'m>>,
+    pub struct_type_index: HashMap<String, Type<'m>>,
     // pub llvm_types: LlvmTypes<'m>,
     // pub class_type_index: HashMap<String, Type<'m>>,
 
@@ -99,10 +127,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
         parser_result: &'m ParserResult,
     ) -> Self {
         let i8_type = IntegerType::new(context, 8).into();
+        let i16_type = IntegerType::new(context, 16).into();
+        let i32_type = IntegerType::new(context, 32).into();
+        let i64_type = IntegerType::new(context, 64);
         let i8_ptr_type = llvm::r#type::r#pointer(i8_type, 0);
         let i8_array_type = llvm::r#type::array(i8_type, 5);
         let i8_array_ptr_type = llvm::r#type::r#pointer(i8_array_type, 0);
-        let i64_type = IntegerType::new(context, 64);
 
         let struct_fields = [i8_ptr_type.into(), i64_type.into(), i64_type.into()];
         let struct_type = llvm::r#type::r#struct(context, &struct_fields, false);
@@ -110,14 +140,16 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let ptr_type = llvm::r#type::opaque_pointer(context);
 
         let llvm_types = LlvmTypes {
-            i8_type,
-            i8_ptr_type,
-            i8_array_type,
-            i8_array_ptr_type,
-            struct_type,
-            struct_ptr_type,
+            i16_type,
+            i32_type,
             i64_type: i64_type.into(),
+            i8_array_ptr_type,
+            i8_array_type,
+            i8_ptr_type,
+            i8_type,
             ptr_type,
+            struct_ptr_type,
+            struct_type,
         };
 
         let mut class_type_index = HashMap::new();
@@ -125,19 +157,26 @@ impl<'c, 'm> Compiler<'c, 'm> {
             let mut struct_fields = vec![];
 
             for attribute in &class.attributes {
-                if let Node::Attribute(attribute) = attribute {
-                    struct_fields.push(match attribute.return_type {
-                        BaseType::BytePtr => llvm_types.i8_ptr_type,
-                        BaseType::Int => llvm_types.i64_type.into(),
-                        BaseType::Void => todo!(),
-                        BaseType::Class(_) => llvm_types.ptr_type,
-                    });
-                }
+                struct_fields.push(basetype_to_mlir_type(llvm_types, &attribute.return_type));
             }
 
             let struct_type = llvm::r#type::r#struct(context, &struct_fields, false);
             class_type_index.insert(class.name.clone(), struct_type);
         }
+
+        let mut struct_type_index = HashMap::new();
+        for (_, struct_node) in &parser_result.index.struct_index {
+            let mut struct_fields = vec![];
+
+            for attribute in &struct_node.attributes {
+                struct_fields.push(basetype_to_mlir_type(llvm_types, &attribute.return_type));
+            }
+
+            let struct_type = llvm::r#type::r#struct(context, &struct_fields, false);
+            struct_type_index.insert(struct_node.name.clone(), struct_type);
+        }
+
+        // module.body().append_operation(llvm::type_alias(Location::unknown(&context)));
 
         Self {
             context,
@@ -145,6 +184,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
             parser_result,
             llvm_types,
             class_type_index,
+            struct_type_index,
         }
     }
 
@@ -295,6 +335,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
             match &node {
                 Node::Def(def) => self.compile_def(def, &mut mctx),
                 Node::DefE(def_e) => self.compile_external_fn(def_e),
+                Node::AssignConstant(node) => self.compile_assign_constant(node, &mut mctx),
                 Node::Access(_) => todo!(),
                 Node::AssignAttribute(_) => todo!(),
                 Node::AssignAttributeAccess(_) => todo!(),
@@ -314,6 +355,9 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 Node::Send(_) => todo!(),
                 Node::StringLiteral(_) => todo!(),
                 Node::Trait(_) => todo!(),
+                Node::Array(_) => todo!(),
+                Node::BuildStruct(_) => todo!(),
+                Node::Struct(_) => todo!(),
             }
         }
     }
@@ -335,22 +379,72 @@ impl<'c, 'm> Compiler<'c, 'm> {
         // :D
     }
 
+    fn compile_assign_constant(&mut self, node: &parser::AssignConstant, mctx: &mut ModuleCtx) {
+        let node_type = self.basetype_to_mlir_type(&node.return_type);
+        let node_value = match node.value.as_ref() {
+            Node::Int(int_node) => int_node.value,
+            Node::Access(_) => todo!(),
+            Node::AssignAttribute(_) => todo!(),
+            Node::AssignAttributeAccess(_) => todo!(),
+            Node::AssignLocalVar(_) => todo!(),
+            Node::AssignConstant(_) => todo!(),
+            Node::Attribute(_) => todo!(),
+            Node::Binary(_) => todo!(),
+            Node::Call(_) => todo!(),
+            Node::Class(_) => todo!(),
+            Node::Const(_) => todo!(),
+            Node::Def(_) => todo!(),
+            Node::DefE(_) => todo!(),
+            Node::Impl(_) => todo!(),
+            Node::LocalVar(_) => todo!(),
+            Node::Loop(_) => todo!(),
+            Node::Module(_) => todo!(),
+            Node::Ret(_) => todo!(),
+            Node::SelfRef(_) => todo!(),
+            Node::Send(_) => todo!(),
+            Node::StringLiteral(_) => todo!(),
+            Node::Trait(_) => todo!(),
+            Node::Array(_) => todo!(),
+            Node::BuildStruct(_) => todo!(),
+            Node::Struct(_) => todo!(),
+        };
+
+        let int_attr = IntegerAttribute::new(node_type, node_value as i64).into();
+
+        // let string_attr = StringAttribute::new(&self.context, &string.value);
+        // let i8_array_type = llvm::r#type::array(self.llvm_types.i8_type, string.value.len() as u32);
+
+        let region = Region::new();
+        // let temp_name = mctx.global_var_counter.to_string();
+
+        self.module.body().append_operation(llvm::global(
+            &self.context,
+            StringAttribute::new(&self.context, node.name.as_str()),
+            Some(int_attr),
+            node_type,
+            region,
+            Location::unknown(&self.context),
+        ));
+    }
+
     fn compile_def(&mut self, node: &parser::Def, mctx: &mut ModuleCtx) {
         let fn_name = StringAttribute::new(&self.context, node.prototype.name.as_str());
         let mut inputs = vec![];
 
         for arg in &node.prototype.args {
-            match &arg.return_type {
-                parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 64).into()),
-                parser::BaseType::Void => todo!(),
-                parser::BaseType::BytePtr => {
-                    inputs.push(self.llvm_types.i8_ptr_type.clone().into())
-                }
-                parser::BaseType::Class(class_name) => {
-                    let struct_type = self.class_type_index.get(class_name).unwrap();
-                    inputs.push(llvm::r#type::r#pointer(*struct_type, 0));
-                }
-            }
+            inputs.push(self.basetype_to_mlir_type(&arg.return_type));
+
+            // match &arg.return_type {
+            //     parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 64).into()),
+            //     parser::BaseType::Void => todo!(),
+            //     parser::BaseType::BytePtr => {
+            //         inputs.push(self.llvm_types.i8_ptr_type.clone().into())
+            //     }
+            //     parser::BaseType::Class(class_name) => {
+            //         let struct_type = self.class_type_index.get(class_name).unwrap();
+            //         inputs.push(llvm::r#type::r#pointer(*struct_type, 0));
+            //     }
+            // }
         }
 
         let fn_signature = if node.main_fn {
@@ -404,14 +498,16 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let mut inputs = vec![];
 
         for arg in &node.prototype.args {
-            match arg.return_type {
-                parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 64).into()),
-                parser::BaseType::Void => todo!(),
-                parser::BaseType::Class(_) => todo!(),
-                parser::BaseType::BytePtr => {
-                    inputs.push(self.llvm_types.i8_ptr_type.clone().into())
-                }
-            }
+            inputs.push(self.basetype_to_mlir_type(&arg.return_type));
+
+            // match arg.return_type {
+            //     parser::BaseType::Int => inputs.push(IntegerType::new(&self.context, 64).into()),
+            //     parser::BaseType::Void => todo!(),
+            //     parser::BaseType::Class(_) => todo!(),
+            //     parser::BaseType::BytePtr => {
+            //         inputs.push(self.llvm_types.i8_ptr_type.clone().into())
+            //     }
+            // }
         }
 
         let results = match &node.prototype.return_type {
@@ -446,24 +542,29 @@ impl<'c, 'm> Compiler<'c, 'm> {
     ) -> Result<Region<'c>, &'static str> {
         let mut inputs = vec![];
         for arg in node.prototype.args.iter() {
-            match &arg.return_type {
-                parser::BaseType::Int => inputs.push((
-                    IntegerType::new(&self.context, 64).into(),
-                    Location::unknown(&self.context),
-                )),
-                parser::BaseType::Void => todo!(),
-                parser::BaseType::BytePtr => inputs.push((
-                    self.llvm_types.i8_ptr_type.clone().into(),
-                    Location::unknown(&self.context),
-                )),
-                parser::BaseType::Class(name) => {
-                    let struct_type = self.class_type_index.get(name).unwrap();
-                    inputs.push((
-                        llvm::r#type::r#pointer(*struct_type, 0),
-                        Location::unknown(&self.context),
-                    ));
-                }
-            }
+            inputs.push((
+                self.basetype_to_mlir_type(&arg.return_type),
+                Location::unknown(&self.context)
+            ));
+
+            // match &arg.return_type {
+            //     parser::BaseType::Int => inputs.push((
+            //         IntegerType::new(&self.context, 64).into(),
+            //         Location::unknown(&self.context),
+            //     )),
+            //     parser::BaseType::Void => todo!(),
+            //     parser::BaseType::BytePtr => inputs.push((
+            //         self.llvm_types.i8_ptr_type.clone().into(),
+            //         Location::unknown(&self.context),
+            //     )),
+            //     parser::BaseType::Class(name) => {
+            //         let struct_type = self.class_type_index.get(name).unwrap();
+            //         inputs.push((
+            //             llvm::r#type::r#pointer(*struct_type, 0),
+            //             Location::unknown(&self.context),
+            //         ));
+            //     }
+            // }
         }
 
         let block = Block::new(&inputs);
@@ -472,15 +573,44 @@ impl<'c, 'm> Compiler<'c, 'm> {
             lvar_stores: HashMap::new(),
         };
 
-        if node.body.iter().len() == 0 {
-            panic!("Empty body not supported")
+        if node.body.iter().len() == 0 && !node.main_fn {
+            block.append_operation(func::r#return(
+                &[],
+                Location::unknown(&self.context),
+            ));
+
+            let region = Region::new();
+            region.append_block(block);
+
+            return Ok(region);
+
+            // panic!("Empty body not supported")
+        } else if node.body.iter().len() == 0 && node.main_fn {
+            let success_int_value = block
+            .append_operation(arith::constant(
+                &self.context,
+                IntegerAttribute::new(
+                    IntegerType::new(&self.context, 32).into(),
+                    1 as i64,
+                )
+                .into(),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+            block.append_operation(func::r#return(
+                &[success_int_value],
+                Location::unknown(&self.context),
+            ));
         }
 
         for (index, arg) in node.prototype.args.iter().enumerate() {
             match arg.return_type {
-                BaseType::BytePtr => {}
-                BaseType::Int => {}
-                BaseType::Void => {}
+                // BaseType::BytePtr => {}
+                // BaseType::Int => {}
+                // BaseType::Void => {}
                 BaseType::Class(_) => {
                     // When a class is the first argument
                     // if index == 0 {
@@ -489,11 +619,13 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     continue;
                     // }
                 }
+                _ => {}
             };
 
             let return_val = block.argument(index).unwrap().into();
             let ptr = self.append_alloca_store(return_val, &block);
             ctx.lvars.insert(arg.name.clone(), ptr);
+            ctx.lvar_stores.insert(arg.name.clone(), ptr);
         }
 
         let last_op_index = node.body.len();
@@ -588,14 +720,18 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::SelfRef(lvar) => self.compile_self_ref(block, lvar),
             Node::Send(node) => self.compile_send(block, node, ctx, mctx),
             Node::StringLiteral(string) => self.compile_string_literal(block, string, ctx, mctx),
+            Node::Const(node) => self.compile_const_ref(block, node),
+            Node::Array(node) => self.compile_array(block, node, ctx, mctx),
+            Node::BuildStruct(node) => self.compile_build_struct(block, node, ctx, mctx),
+            Node::AssignConstant(_) => panic!("Syntax error"),
             Node::Attribute(_) => panic!("Syntax error"),
             Node::Class(_) => panic!("Syntax error"),
-            Node::Const(_) => todo!(),
             Node::Def(_) => panic!("Syntax error"),
             Node::DefE(_) => panic!("Syntax error"),
             Node::Impl(_) => panic!("Syntax error"),
             Node::Module(_) => panic!("Syntax error"),
             Node::Trait(_) => panic!("Syntax error"),
+            Node::Struct(_) => panic!("Syntax error"),
         }
     }
 
@@ -612,73 +748,9 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 let attribute_index = access.index;
 
                 match &lvar.return_type {
-                    Some(rt) => match rt {
-                        BaseType::BytePtr => todo!(),
-                        BaseType::Int => todo!(),
-                        BaseType::Void => todo!(),
-                        BaseType::Class(_lvar_type_name) => {
-                            // Load the attribute access
-                            let result_type = match &access.return_type {
-                                Some(rt) => match rt {
-                                    BaseType::BytePtr => self.llvm_types.i8_ptr_type,
-                                    BaseType::Int => self.llvm_types.i64_type,
-                                    BaseType::Void => todo!(),
-                                    BaseType::Class(attribute_type_name) => {
-                                        let struct_type = *self
-                                            .class_type_index
-                                            .get(attribute_type_name)
-                                            .unwrap();
-                                        llvm::r#type::r#pointer(struct_type, 0)
-                                    }
-                                },
-                                None => todo!(),
-                            };
-
-                            let gep = block.append_operation(llvm::get_element_ptr(
-                                &self.context,
-                                *lvar_value,
-                                DenseI32ArrayAttribute::new(&self.context, &[0, attribute_index]),
-                                llvm::r#type::r#pointer(result_type, 0),
-                                Location::unknown(&self.context),
-                            ));
-
-                            let load_op = block.append_operation(llvm::load(
-                                &self.context,
-                                gep.result(0).unwrap().into(),
-                                result_type,
-                                Location::unknown(&self.context),
-                                Default::default(),
-                            ));
-
-                            load_op
-                        }
-                    },
-                    None => todo!(),
-                }
-            }
-            Node::SelfRef(self_ref) => {
-                let lvar_value = ctx.lvars.get("sret").unwrap();
-                let attribute_index = access.index;
-
-                match &self_ref.return_type {
-                    BaseType::BytePtr => todo!(),
-                    BaseType::Int => todo!(),
-                    BaseType::Void => todo!(),
-                    BaseType::Class(self_type_name) => {
+                    Some(rt) => {
                         // Load the attribute access
-                        let result_type = match &access.return_type {
-                            Some(rt) => match rt {
-                                BaseType::BytePtr => self.llvm_types.i8_ptr_type,
-                                BaseType::Int => self.llvm_types.i64_type,
-                                BaseType::Void => todo!(),
-                                BaseType::Class(attribute_type_name) => {
-                                    let struct_type =
-                                        self.class_type_index.get(attribute_type_name).unwrap();
-                                    llvm::r#type::r#pointer(*struct_type, 0)
-                                }
-                            },
-                            None => todo!(),
-                        };
+                        let result_type = self.basetype_to_mlir_type(&access.return_type.clone().unwrap());
 
                         let gep = block.append_operation(llvm::get_element_ptr(
                             &self.context,
@@ -697,8 +769,140 @@ impl<'c, 'm> Compiler<'c, 'm> {
                         ));
 
                         load_op
-                    }
+
+                    // Some(rt) => match rt {
+                        // BaseType::BytePtr => {
+                        //     self.llvm_types.i8_ptr_type
+                        // },
+                        // BaseType::Int => self.llvm_types.i64_type,
+                        // BaseType::Void => todo!(),
+                        // BaseType::Class(_lvar_type_name) => {
+                        //     // Load the attribute access
+                        //     let result_type = self.basetype_to_mlir_type(&access.return_type.unwrap());
+                        //     // match &access.return_type {
+                        //     //     Some(rt) => match rt {
+                        //     //         BaseType::BytePtr => self.llvm_types.i8_ptr_type,
+                        //     //         BaseType::Int => self.llvm_types.i64_type,
+                        //     //         BaseType::Void => todo!(),
+                        //     //         BaseType::Class(attribute_type_name) => {
+                        //     //             let struct_type = *self
+                        //     //                 .class_type_index
+                        //     //                 .get(attribute_type_name)
+                        //     //                 .unwrap();
+                        //     //             llvm::r#type::r#pointer(struct_type, 0)
+                        //     //         }
+                        //     //         BaseType::Byte => self.llvm_types.i8_type,
+                        //     //         BaseType::Int16 => self.llvm_types.i16_type,
+                        //     //         BaseType::Int32 => self.llvm_types.i32_type,
+                        //     //         BaseType::Int64 => self.llvm_types.i64_type,
+                        //     //         BaseType::Array(length, base_type) => {
+                        //     //             llvm::r#type::array(self.llvm_types.i8_type, string.value.len() as u32);
+                        //     //         },
+                        //     //     },
+                        //     //     None => todo!(),
+                        //     // };
+
+                        //     let gep = block.append_operation(llvm::get_element_ptr(
+                        //         &self.context,
+                        //         *lvar_value,
+                        //         DenseI32ArrayAttribute::new(&self.context, &[0, attribute_index]),
+                        //         llvm::r#type::r#pointer(result_type, 0),
+                        //         Location::unknown(&self.context),
+                        //     ));
+
+                        //     let load_op = block.append_operation(llvm::load(
+                        //         &self.context,
+                        //         gep.result(0).unwrap().into(),
+                        //         result_type,
+                        //         Location::unknown(&self.context),
+                        //         Default::default(),
+                        //     ));
+
+                        //     load_op
+                        // }
+                        // BaseType::Byte => self.llvm_types.i8_type,
+                        // BaseType::Int16 => todo!(),
+                        // BaseType::Int32 => todo!(),
+                        // BaseType::Int64 => todo!(),
+                        // BaseType::Array(_, _) => todo!(),
+                    },
+                    None => todo!(),
                 }
+            }
+            Node::SelfRef(self_ref) => {
+                let lvar_value = ctx.lvars.get("sret").unwrap();
+                let attribute_index = access.index;
+
+                // Load the attribute access
+                let result_type = self.basetype_to_mlir_type(&access.return_type.clone().unwrap());
+
+                let gep = block.append_operation(llvm::get_element_ptr(
+                    &self.context,
+                    *lvar_value,
+                    DenseI32ArrayAttribute::new(&self.context, &[0, attribute_index]),
+                    llvm::r#type::r#pointer(result_type, 0),
+                    Location::unknown(&self.context),
+                ));
+
+                let load_op = block.append_operation(llvm::load(
+                    &self.context,
+                    gep.result(0).unwrap().into(),
+                    result_type,
+                    Location::unknown(&self.context),
+                    Default::default(),
+                ));
+
+                load_op
+
+                // match &self_ref.return_type {
+                //     BaseType::BytePtr => todo!(),
+                //     BaseType::Int => todo!(),
+                //     BaseType::Void => todo!(),
+                //     BaseType::Class(self_type_name) => {
+                //         // Load the attribute access
+                //         let result_type = match &access.return_type {
+                //             Some(rt) => match rt {
+                //                 BaseType::BytePtr => self.llvm_types.i8_ptr_type,
+                //                 BaseType::Int => self.llvm_types.i64_type,
+                //                 BaseType::Void => todo!(),
+                //                 BaseType::Class(attribute_type_name) => {
+                //                     let struct_type =
+                //                         self.class_type_index.get(attribute_type_name).unwrap();
+                //                     llvm::r#type::r#pointer(*struct_type, 0)
+                //                 }
+                //                 BaseType::Byte => todo!(),
+                //                 BaseType::Int16 => todo!(),
+                //                 BaseType::Int32 => todo!(),
+                //                 BaseType::Int64 => todo!(),
+                //                 BaseType::Array(_, _) => todo!(),
+                //             },
+                //             None => todo!(),
+                //         };
+
+                //         let gep = block.append_operation(llvm::get_element_ptr(
+                //             &self.context,
+                //             *lvar_value,
+                //             DenseI32ArrayAttribute::new(&self.context, &[0, attribute_index]),
+                //             llvm::r#type::r#pointer(result_type, 0),
+                //             Location::unknown(&self.context),
+                //         ));
+
+                //         let load_op = block.append_operation(llvm::load(
+                //             &self.context,
+                //             gep.result(0).unwrap().into(),
+                //             result_type,
+                //             Location::unknown(&self.context),
+                //             Default::default(),
+                //         ));
+
+                //         load_op
+                //     }
+                //     BaseType::Byte => todo!(),
+                //     BaseType::Int16 => todo!(),
+                //     BaseType::Int32 => todo!(),
+                //     BaseType::Int64 => todo!(),
+                //     BaseType::Array(_, _) => todo!(),
+                // }
             }
             _ => todo!(),
         };
@@ -718,18 +922,13 @@ impl<'c, 'm> Compiler<'c, 'm> {
             _ => return Err("Expected send_node message to be a Call"),
         };
 
-        let (class_name, value) = match send_node.receiver.as_ref() {
+        let value = match send_node.receiver.as_ref() {
             Node::LocalVar(local_var) => match &local_var.return_type {
-                Some(rt) => match rt {
-                    BaseType::Int => todo!(),
-                    BaseType::Void => todo!(),
-                    BaseType::BytePtr => todo!(),
-                    BaseType::Class(class_name) => {
-                        let value = ctx.lvars.get(&local_var.name).unwrap();
-                        // let value = self.compile_local_var(block, local_var, ctx, mctx);
-                        (class_name.clone(), Ok(Some(*value)))
-                    }
-                },
+                Some(rt) => {
+                    let value = ctx.lvars.get(&local_var.name).unwrap();
+                    // let value = self.compile_local_var(block, local_var, ctx, mctx);
+                    Ok(Some(*value))
+                }
                 None => todo!(),
             },
             Node::Const(const_node) => {
@@ -743,45 +942,59 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     todo!()
                 };
 
-                (const_node.name.clone(), Ok(Some(value)))
+                Ok(Some(value))
             }
-            Node::Access(access) => (
-                nilla_class_name(&access.return_type.clone().unwrap()),
-                self.compile_attribute_access(block, access, ctx, mctx),
-            ),
+            Node::Access(access) => self.compile_attribute_access(block, access, ctx, mctx),
             _ => return Err("Send only implements LocalVar so far"),
         };
 
         // let scoped_fn_name = format!("{}.{}", class_name, call_node.fn_name);
         let receiver_value = value.unwrap().unwrap();
 
-        let mut inputs = vec![receiver_value.r#type()];
+        // let mut inputs = vec![receiver_value.r#type()];
+        let mut inputs = vec![];
 
-        for arg in &call_node.args {
-            let arg_return_type = match &arg {
-                Node::Access(access_node) => {
-                    self.basetype_to_mlir_type(&access_node.return_type.as_ref().unwrap())
-                }
-                Node::SelfRef(selfref_node) => todo!(),
-                Node::Binary(binary_node) => todo!(),
-                Node::Call(call_node) => {
-                    self.basetype_to_mlir_type(&call_node.return_type.as_ref().unwrap())
-                }
-                Node::Send(send_node) => {
-                    self.basetype_to_mlir_type(&send_node.return_type.as_ref().unwrap())
-                }
-                Node::Int(int_node) => self.basetype_to_mlir_type(&BaseType::Int),
-                Node::StringLiteral(interpolablestring_node) => {
-                    self.basetype_to_mlir_type(&BaseType::Class("Str".to_string()))
-                }
-                Node::LocalVar(localvar_node) => {
-                    self.basetype_to_mlir_type(&localvar_node.return_type.as_ref().unwrap())
-                }
-                _ => return Err("Syntax Error: Invalid argument type"),
-            };
+        println!("{:#?}", &call_node.fn_name);
 
-            inputs.push(arg_return_type);
+        println!("{:#?}", self.parser_result.index.fn_prototype_index);
+
+        let prototype = self.parser_result.index.fn_prototype_index.get(&call_node.fn_name).unwrap();
+
+        for arg in &prototype.args {
+            // use the prototype to find the value. 0 is causing i64 instead of the needed i32
+
+            inputs.push(self.basetype_to_mlir_type(&arg.return_type));
         }
+
+        // for arg in &call_node.args {
+        //     let arg_return_type = match &arg {
+        //         Node::Access(access_node) => {
+        //             self.basetype_to_mlir_type(&access_node.return_type.as_ref().unwrap())
+        //         }
+        //         Node::SelfRef(selfref_node) => todo!(),
+        //         Node::Binary(binary_node) => todo!(),
+        //         Node::Call(call_node) => {
+        //             self.basetype_to_mlir_type(&call_node.return_type.as_ref().unwrap())
+        //         }
+        //         Node::Send(send_node) => {
+        //             self.basetype_to_mlir_type(&send_node.return_type.as_ref().unwrap())
+        //         }
+        //         Node::Int(int_node) => self.basetype_to_mlir_type(&BaseType::Int),
+        //         Node::StringLiteral(interpolablestring_node) => {
+        //             self.basetype_to_mlir_type(&BaseType::Class("Str".to_string()))
+        //         }
+        //         Node::LocalVar(localvar_node) => {
+        //             self.basetype_to_mlir_type(&localvar_node.return_type.as_ref().unwrap())
+        //         }
+        //         Node::Const(const_node) => {
+        //             let base_type = self.parser_result.index.constant_index.get(&const_node.name).unwrap();
+        //             self.basetype_to_mlir_type(base_type)
+        //         }
+        //         _ => return Err("Syntax Error: Invalid argument type"),
+        //     };
+
+        //     inputs.push(arg_return_type);
+        // }
 
         let location = Location::unknown(&self.context);
         let mut result = match &send_node.return_type {
@@ -804,10 +1017,31 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
         let mut compiled_args = vec![receiver_value];
 
-        for arg in &call_node.args {
-            let arg_value = self.compile_expr(block, &arg, ctx, mctx).unwrap();
-            compiled_args.push(arg_value.unwrap());
+        println!("call_node.args");
+        println!("{:#?}", call_node.args);
+
+        for (index, arg) in call_node.args.iter().enumerate() {
+            let mut value = self.compile_expr(block, &arg, ctx, mctx).unwrap().unwrap();
+            let arg_return_type = self.node_base_type(arg).unwrap();
+            let prototype_arg_type = prototype.args[index + 1].return_type.clone();
+
+            println!("{:#?}", prototype);
+            println!("{:#?}", arg_return_type);
+
+            println!("{:#?}", prototype_arg_type);
+
+            println!("{:#?}", arg);
+
+            // refactor, duplicate of call
+            value = self.compile_type_cast(block, value, arg_return_type, prototype_arg_type);
+
+            compiled_args.push(value);
         }
+
+        // for arg in &call_node.args {
+        //     let arg_value = self.compile_expr(block, &arg, ctx, mctx).unwrap();
+        //     compiled_args.push(arg_value.unwrap());
+        // }
 
         if let Some(_) = &send_node.return_type {
             if call_node.fn_name.ends_with(".new") {
@@ -844,6 +1078,211 @@ impl<'c, 'm> Compiler<'c, 'm> {
         }
     }
 
+    fn compile_type_cast<'a>(
+        &self,
+        block: &'a Block<'c>,
+        mut value: Value<'c, 'a>,
+        arg_return_type: BaseType,
+        prototype_arg_type: BaseType,
+    ) -> Value<'c, 'a> {
+        if arg_return_type != prototype_arg_type {
+            let cast_type = self.basetype_to_mlir_type(&prototype_arg_type);
+
+            match arg_return_type {
+                BaseType::Byte => match prototype_arg_type {
+                    BaseType::Byte => todo!(),
+                    BaseType::Int => {
+                        value = block
+                            .append_operation(
+                                arith::extsi(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int16 => todo!(),
+                    BaseType::Int32 => {
+                        value = block
+                            .append_operation(
+                                arith::extsi(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int64 => todo!(),
+                    BaseType::Array(_, _) => todo!(),
+                    BaseType::Class(_) => todo!(),
+                    BaseType::BytePtr => todo!(),
+                    BaseType::Void => todo!(),
+                    BaseType::Struct(_) => todo!(),
+                },
+                BaseType::Int => match prototype_arg_type {
+                    BaseType::Byte => todo!(),
+                    BaseType::Int => todo!(),
+                    BaseType::Int16 => {
+                        value = block
+                            .append_operation(
+                                arith::trunci(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int32 => todo!(),
+                    BaseType::Int64 => todo!(),
+                    BaseType::Array(_, _) => todo!(),
+                    BaseType::Class(_) => todo!(),
+                    BaseType::Struct(_) => todo!(),
+                    BaseType::BytePtr => todo!(),
+                    BaseType::Void => todo!(),
+                },
+                BaseType::Int16 => match prototype_arg_type {
+                    BaseType::Byte => {
+                        value = block
+                            .append_operation(
+                                arith::trunci(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int => {
+                        value = block
+                            .append_operation(
+                                arith::extsi(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int16 => todo!(),
+                    BaseType::Int32 => todo!(),
+                    BaseType::Int64 => todo!(),
+                    BaseType::Array(_, _) => todo!(),
+                    BaseType::Class(_) => todo!(),
+                    BaseType::BytePtr => todo!(),
+                    BaseType::Void => todo!(),
+                    BaseType::Struct(_) => todo!(),
+                },
+                BaseType::Int32 => match prototype_arg_type {
+                    BaseType::Byte => {
+                        value = block
+                            .append_operation(
+                                arith::trunci(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int => {
+                        value = block
+                            .append_operation(
+                                arith::extsi(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int16 => {
+                        value = block
+                            .append_operation(
+                                arith::trunci(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int32 => todo!(),
+                    BaseType::Int64 => {
+                        value = block
+                            .append_operation(
+                                arith::extsi(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Array(_, _) => todo!(),
+                    BaseType::Class(_) => todo!(),
+                    BaseType::BytePtr => todo!(),
+                    BaseType::Void => todo!(),
+                    BaseType::Struct(_) => todo!(),
+                },
+                BaseType::Int64 => match prototype_arg_type {
+                    BaseType::Byte => {
+                        value = block
+                            .append_operation(
+                                arith::trunci(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int => {},
+                    BaseType::Int16 => {
+                        value = block
+                            .append_operation(
+                                arith::trunci(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int32 => {
+                        value = block
+                            .append_operation(
+                                arith::trunci(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                    },
+                    BaseType::Int64 => todo!(),
+                    BaseType::Array(_, _) => todo!(),
+                    BaseType::Class(_) => {},
+                    BaseType::BytePtr => todo!(),
+                    BaseType::Void => todo!(),
+                    BaseType::Struct(_) => todo!(),
+                },
+                BaseType::Array(_, _) => match prototype_arg_type {
+                    BaseType::Byte => todo!(),
+                    BaseType::Int => todo!(),
+                    BaseType::Int16 => todo!(),
+                    BaseType::Int32 => todo!(),
+                    BaseType::Int64 => todo!(),
+                    BaseType::Array(_, _) => {
+                        // value = block
+                        //     .append_operation(
+                        //         llvm::bitcast(value, cast_type, Location::unknown(&self.context))
+                        //     )
+                        //     .result(0)
+                        //     .unwrap()
+                        //     .into();
+                    },
+                    BaseType::Class(_) => todo!(),
+                    BaseType::Struct(_) => todo!(),
+                    BaseType::BytePtr => todo!(),
+                    BaseType::Void => todo!(),
+                },
+                BaseType::Class(_) => {
+                        value = block
+                            .append_operation(
+                                llvm::bitcast(value, cast_type, Location::unknown(&self.context))
+                            )
+                            .result(0)
+                            .unwrap()
+                            .into();
+                },
+                BaseType::BytePtr => todo!(),
+                BaseType::Void => todo!(),
+                BaseType::Struct(_) => {},
+            }
+        }
+
+        value
+    }
+
     fn compile_self_ref<'a>(
         &self,
         block: &'a Block<'c>,
@@ -862,30 +1301,47 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let location = Location::unknown(&self.context);
 
         let mut inputs = vec![];
-        for arg in &call.args {
-            let arg_return_type = match &arg {
-                Node::Access(access_node) => {
-                    self.basetype_to_mlir_type(&access_node.return_type.as_ref().unwrap())
-                }
-                Node::SelfRef(selfref_node) => todo!(),
-                Node::Binary(binary_node) => todo!(),
-                Node::Call(call_node) => {
-                    self.basetype_to_mlir_type(&call_node.return_type.as_ref().unwrap())
-                }
-                Node::Send(send_node) => {
-                    self.basetype_to_mlir_type(&send_node.return_type.as_ref().unwrap())
-                }
-                Node::Int(int_node) => self.basetype_to_mlir_type(&BaseType::Int),
-                Node::StringLiteral(interpolablestring_node) => {
-                    self.basetype_to_mlir_type(&BaseType::Class("Str".to_string()))
-                }
-                Node::LocalVar(localvar_node) => {
-                    self.basetype_to_mlir_type(&localvar_node.return_type.as_ref().unwrap())
-                }
-                _ => return Err("Syntax Error: Invalid argument type"),
-            };
 
-            inputs.push(arg_return_type);
+        println!("self.parser_result.index.fn_prototype_index");
+        println!("{:#?}", self.parser_result.index.fn_prototype_index);
+
+        println!("{:#?}", &call.fn_name);
+
+        let prototype = self.parser_result.index.fn_prototype_index.get(&call.fn_name).unwrap();
+
+        for arg in &prototype.args {
+            // use the prototype to find the value. 0 is causing i64 instead of the needed i32
+
+            inputs.push(self.basetype_to_mlir_type(&arg.return_type));
+
+
+            // let arg_return_type = match &arg {
+            //     Node::Access(access_node) => {
+            //         self.basetype_to_mlir_type(&access_node.return_type.as_ref().unwrap())
+            //     }
+            //     Node::SelfRef(selfref_node) => todo!(),
+            //     Node::Binary(binary_node) => todo!(),
+            //     Node::Call(call_node) => {
+            //         self.basetype_to_mlir_type(&call_node.return_type.as_ref().unwrap())
+            //     }
+            //     Node::Send(send_node) => {
+            //         self.basetype_to_mlir_type(&send_node.return_type.as_ref().unwrap())
+            //     }
+            //     Node::Int(int_node) => self.basetype_to_mlir_type(&BaseType::Int),
+            //     Node::StringLiteral(interpolablestring_node) => {
+            //         self.basetype_to_mlir_type(&BaseType::Class("Str".to_string()))
+            //     }
+            //     Node::LocalVar(localvar_node) => {
+            //         self.basetype_to_mlir_type(&localvar_node.return_type.as_ref().unwrap())
+            //     }
+            //     Node::Const(const_node) => {
+            //         let base_type = self.parser_result.index.constant_index.get(&const_node.name).unwrap();
+            //         self.basetype_to_mlir_type(base_type)
+            //     }
+            //     _ => return Err("Syntax Error: Invalid argument type"),
+            // };
+
+            // inputs.push(arg_return_type);
         }
 
         let result = match &call.return_type {
@@ -904,9 +1360,111 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
         let mut compiled_args = vec![];
 
-        for arg in &call.args {
-            let value = self.compile_expr(block, &arg, ctx, mctx).unwrap();
-            compiled_args.push(value.unwrap());
+        for (index, arg) in call.args.iter().enumerate() {
+            let mut value = self.compile_expr(block, &arg, ctx, mctx).unwrap().unwrap();
+            let arg_return_type = self.node_base_type(arg).unwrap();
+            let prototype_arg_type = prototype.args[index].return_type.clone();
+
+            println!("{:#?}", "AAAAAAAAAA");
+
+            println!("{:#?}", prototype);
+            println!("{:#?}", arg_return_type);
+
+            println!("{:#?}", prototype_arg_type);
+
+            println!("{:#?}", arg);
+
+            value = self.compile_type_cast(block, value, arg_return_type, prototype_arg_type);
+
+            // if arg_return_type != prototype_arg_type {
+            //     let cast_type = self.basetype_to_mlir_type(&prototype_arg_type);
+
+            //     match arg_return_type {
+            //         BaseType::Byte => todo!(),
+            //         BaseType::Int => todo!(),
+            //         BaseType::Int16 => todo!(),
+            //         BaseType::Int32 => match prototype_arg_type {
+            //             BaseType::Byte => todo!(),
+            //             BaseType::Int => {
+            //                 value = block
+            //                     .append_operation(
+            //                         arith::extsi(value, cast_type, Location::unknown(&self.context))
+            //                     )
+            //                     .result(0)
+            //                     .unwrap()
+            //                     .into();
+            //             },
+            //             BaseType::Int16 => todo!(),
+            //             BaseType::Int32 => todo!(),
+            //             BaseType::Int64 => {
+            //                 value = block
+            //                     .append_operation(
+            //                         arith::extsi(value, cast_type, Location::unknown(&self.context))
+            //                     )
+            //                     .result(0)
+            //                     .unwrap()
+            //                     .into();
+            //             },
+            //             BaseType::Array(_, _) => todo!(),
+            //             BaseType::Class(_) => todo!(),
+            //             BaseType::BytePtr => todo!(),
+            //             BaseType::Void => todo!(),
+            //         },
+            //         BaseType::Int64 => match prototype_arg_type {
+            //             BaseType::Byte => todo!(),
+            //             BaseType::Int => todo!(),
+            //             BaseType::Int16 => {
+            //                 value = block
+            //                     .append_operation(
+            //                         arith::trunci(value, cast_type, Location::unknown(&self.context))
+            //                     )
+            //                     .result(0)
+            //                     .unwrap()
+            //                     .into();
+            //             },
+            //             BaseType::Int32 => {
+            //                 value = block
+            //                     .append_operation(
+            //                         arith::trunci(value, cast_type, Location::unknown(&self.context))
+            //                     )
+            //                     .result(0)
+            //                     .unwrap()
+            //                     .into();
+            //             },
+            //             BaseType::Int64 => todo!(),
+            //             BaseType::Array(_, _) => todo!(),
+            //             BaseType::Class(_) => todo!(),
+            //             BaseType::BytePtr => todo!(),
+            //             BaseType::Void => todo!(),
+            //         },
+            //         BaseType::Array(_, _) => todo!(),
+            //         BaseType::Class(class) => {
+            //             match prototype_arg_type {
+            //                 BaseType::Byte => todo!(),
+            //                 BaseType::Int => todo!(),
+            //                 BaseType::Int16 => todo!(),
+            //                 BaseType::Int32 => todo!(),
+            //                 BaseType::Int64 => todo!(),
+            //                 BaseType::Array(_, _) => todo!(),
+            //                 BaseType::Class(_) => {
+            //                     value = block
+            //                         .append_operation(
+            //                             llvm::bitcast(value, cast_type, Location::unknown(&self.context))
+            //                         )
+            //                         .result(0)
+            //                         .unwrap()
+            //                         .into();
+            //                 },
+            //                 BaseType::BytePtr => todo!(),
+            //                 BaseType::Void => todo!(),
+            //             }
+            //         },
+            //         BaseType::BytePtr => todo!(),
+            //         BaseType::Void => todo!(),
+            //     }
+            // }
+
+            compiled_args.push(value);
         }
 
         if let Some(_) = &call.return_type {
@@ -1109,16 +1667,26 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-        match ctx.lvars.get(&lvar.name) {
-            Some(value) => return Ok(Some(*value)),
+        let lvar_value = match ctx.lvars.get(&lvar.name) {
+            Some(value) => *value,
             None => todo!(),
-        }
+        };
+
+        let lvar_type = match &lvar.return_type {
+            Some(base_type) => match base_type {
+                BaseType::Class(_) => return Ok(Some(lvar_value)),
+                _base_type => {
+                    self.basetype_to_mlir_type(_base_type)
+                }
+            },
+            None => todo!(),
+        };
 
         let loaded_val = block
             .append_operation(llvm::load(
                 &self.context,
                 *ctx.lvars.get(&lvar.name).unwrap(),
-                self.llvm_types.struct_ptr_type,
+                lvar_type,
                 Location::unknown(&self.context),
                 Default::default(),
             ))
@@ -1127,6 +1695,204 @@ impl<'c, 'm> Compiler<'c, 'm> {
             .into();
 
         Ok(Some(loaded_val))
+    }
+
+    fn compile_const_ref<'a>(
+        &self,
+        block: &'a Block<'c>,
+        const_node: &parser::Const
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
+        let const_type = self.parser_result.index.constant_index.get(&const_node.name).unwrap();
+        let mlir_type = self.basetype_to_mlir_type(const_type);
+
+        let addressof_op = block
+            .append_operation(llvm::addressof(
+                &self.context,
+                const_node.name.as_str(),
+                llvm::r#type::pointer(mlir_type, 0),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        let loaded_val = block
+            .append_operation(llvm::load(
+                &self.context,
+                addressof_op,
+                mlir_type,
+                Location::unknown(&self.context),
+                Default::default(),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        Ok(Some(loaded_val))
+    }
+
+    fn compile_array<'a>(
+        &self,
+        block: &'a Block<'c>,
+        array_node: &parser::Array,
+        ctx: &mut FnCtx<'c, 'a>,
+        mctx: &mut ModuleCtx,
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
+        let size = block
+            .append_operation(arith::constant(
+                &self.context,
+                IntegerAttribute::new(self.llvm_types.i64_type.clone(), 1).into(),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        let array_item_type = self.basetype_to_mlir_type(&array_node.item_type);
+        let array_type = self.basetype_to_mlir_type(
+            &BaseType::Array(array_node.length, Box::new(array_node.item_type.clone()))
+        );
+        let ptr_type = r#type::pointer(array_type, 0);
+
+        let array_alloca = block
+            .append_operation(llvm::alloca(
+                &self.context,
+                size,
+                ptr_type,
+                // struct_type,
+                Location::unknown(&self.context),
+                Default::default(),
+                // AllocaOptions::new().elem_type(Some(TypeAttribute::new(value.r#type()))),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        for (index, arg) in array_node.items.iter().enumerate() {
+            let mut return_val = self.compile_expr(block, arg, ctx, mctx).unwrap();
+
+            let gep = block
+                .append_operation(llvm::get_element_ptr(
+                    &self.context,
+                    array_alloca,
+                    DenseI32ArrayAttribute::new(&self.context, &[0, index as i32]),
+                    llvm::r#type::r#pointer(array_item_type, 0),
+                    Location::unknown(&self.context),
+                ))
+                .result(0)
+                .unwrap()
+                .into();
+
+            return_val = Some(self.compile_type_cast(block,
+                return_val.unwrap(),
+                self.node_base_type(arg).unwrap(),
+                array_node.item_type.clone()));
+
+            block.append_operation(llvm::store(
+                &self.context,
+                return_val.unwrap(),
+                gep,
+                Location::unknown(&self.context),
+                Default::default(),
+            ));
+        };
+
+        // let result = block
+        //     .append_operation(llvm::load(
+        //         &self.context,
+        //         array_alloca,
+        //         struct_type,
+        //         Location::unknown(&self.context),
+        //         Default::default(),
+        //     ))
+        //     .result(0)
+        //     .unwrap()
+        //     .into();
+
+        Ok(Some(array_alloca))
+        // Ok(Some(result))
+    }
+
+    fn compile_build_struct<'a>(
+        &self,
+        block: &'a Block<'c>,
+        build_struct_node: &parser::BuildStruct,
+        ctx: &mut FnCtx<'c, 'a>,
+        mctx: &mut ModuleCtx,
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
+        let size = block
+            .append_operation(arith::constant(
+                &self.context,
+                IntegerAttribute::new(self.llvm_types.i64_type.clone(), 1).into(),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        let struct_node = self.parser_result.index.struct_index.get(&build_struct_node.name).unwrap();
+        let struct_type = self.basetype_to_mlir_type(&struct_node.return_type);
+        let ptr_type = r#type::pointer(struct_type, 0);
+
+        let struct_alloca = block
+            .append_operation(llvm::alloca(
+                &self.context,
+                size,
+                ptr_type,
+                // struct_type,
+                Location::unknown(&self.context),
+                Default::default(),
+                // AllocaOptions::new().elem_type(Some(TypeAttribute::new(value.r#type()))),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        for (index, arg) in build_struct_node.args.iter().enumerate() {
+            let mut return_val = self.compile_expr(block, arg, ctx, mctx).unwrap();
+            let struct_attr_type = &struct_node.attributes[index].return_type;
+            let return_type = self.basetype_to_mlir_type(struct_attr_type);
+
+            let gep = block
+                .append_operation(llvm::get_element_ptr(
+                    &self.context,
+                    struct_alloca,
+                    DenseI32ArrayAttribute::new(&self.context, &[0, index as i32]),
+                    llvm::r#type::r#pointer(return_type, 0),
+                    Location::unknown(&self.context),
+                ))
+                .result(0)
+                .unwrap()
+                .into();
+
+            return_val = Some(self.compile_type_cast(block,
+                return_val.unwrap(),
+                self.node_base_type(arg).unwrap(),
+                struct_attr_type.clone()));
+
+            block.append_operation(llvm::store(
+                &self.context,
+                return_val.unwrap(),
+                gep,
+                Location::unknown(&self.context),
+                Default::default(),
+            ));
+        };
+
+        // let result = block
+        //     .append_operation(llvm::load(
+        //         &self.context,
+        //         struct_alloca,
+        //         struct_type,
+        //         Location::unknown(&self.context),
+        //         Default::default(),
+        //     ))
+        //     .result(0)
+        //     .unwrap()
+        //     .into();
+
+        Ok(Some(struct_alloca))
+        // Ok(Some(result))
     }
 
     fn compile_loop<'a>(
@@ -1282,6 +2048,10 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::AssignAttributeAccess(_) => todo!(),
             Node::Const(_) => todo!(),
             Node::Loop(_) => todo!(),
+            Node::AssignConstant(_) => todo!(),
+            Node::Array(_) => todo!(),
+            Node::BuildStruct(_) => todo!(),
+            Node::Struct(_) => todo!(),
         };
 
         // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
@@ -1429,29 +2199,32 @@ impl<'c, 'm> Compiler<'c, 'm> {
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
 
-        let return_val = match asgn_attr.value.as_ref() {
-            Node::LocalVar(lvar) => match ctx.lvar_stores.get(&lvar.name) {
-                Some(value) => *value,
-                None => {
-                    let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
-                    let return_type = lvar_value.r#type();
-                    let ptr = self.append_alloca_store(*lvar_value, block);
-                    ctx.lvars.insert(lvar.name.clone(), ptr);
-                    ctx.lvar_stores.insert(lvar.name.clone(), ptr);
+        println!("lvar: {:#?}", asgn_attr.value.as_ref());
+        println!("{:#?}", ctx.lvars);
 
-                    block
-                        .append_operation(llvm::load(
-                            &self.context,
-                            ptr,
-                            return_type,
-                            Location::unknown(&self.context),
-                            Default::default(),
-                        ))
-                        .result(0)
-                        .unwrap()
-                        .into()
-                }
-            },
+        let return_val = match asgn_attr.value.as_ref() {
+            // Node::LocalVar(lvar) => match ctx.lvar_stores.get(&lvar.name) {
+            //     Some(value) => *value,
+            //     None => {
+            //         let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
+            //         let return_type = lvar_value.r#type();
+            //         let ptr = self.append_alloca_store(*lvar_value, block);
+            //         ctx.lvars.insert(lvar.name.clone(), ptr);
+            //         ctx.lvar_stores.insert(lvar.name.clone(), ptr);
+
+            //         block
+            //             .append_operation(llvm::load(
+            //                 &self.context,
+            //                 ptr,
+            //                 return_type,
+            //                 Location::unknown(&self.context),
+            //                 Default::default(),
+            //             ))
+            //             .result(0)
+            //             .unwrap()
+            //             .into()
+            //     }
+            // },
             _ => match self.compile_expr(&block, &asgn_attr.value, ctx, mctx) {
                 Ok(ret_val) => ret_val.unwrap(),
                 Err(e) => return Err(e),
@@ -1466,6 +2239,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 *sret_value,
                 DenseI32ArrayAttribute::new(&self.context, &[0, asgn_attr.index]),
                 llvm::r#type::r#pointer(return_val.r#type(), 0),
+                // return_val.r#type(),
                 Location::unknown(&self.context),
             ))
             .result(0)
@@ -1495,29 +2269,36 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Err(e) => return Err(e),
         };
 
-        let return_type = match asgn_lvar.value.as_ref() {
-            Node::Send(send_node) => send_node.return_type.clone(),
-            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
-            Node::Access(_) => todo!(),
-            Node::AssignAttribute(_) => todo!(),
-            Node::AssignAttributeAccess(_) => todo!(),
-            Node::AssignLocalVar(_) => todo!(),
-            Node::Attribute(_) => todo!(),
-            Node::Binary(_) => todo!(),
-            Node::Call(_) => todo!(),
-            Node::Class(_) => todo!(),
-            Node::Const(_) => todo!(),
-            Node::Def(_) => todo!(),
-            Node::DefE(_) => todo!(),
-            Node::Impl(_) => todo!(),
-            Node::Int(_) => todo!(),
-            Node::LocalVar(_) => todo!(),
-            Node::Loop(_) => todo!(),
-            Node::Module(_) => todo!(),
-            Node::Ret(_) => todo!(),
-            Node::SelfRef(_) => todo!(),
-            Node::Trait(_) => todo!(),
-        };
+        let return_type = self.node_base_type(&asgn_lvar.value);
+
+        // let return_type = match asgn_lvar.value.as_ref() {
+        //     Node::Send(send_node) => send_node.return_type.clone(),
+        //     Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
+        //     Node::Access(_) => todo!(),
+        //     Node::AssignAttribute(_) => todo!(),
+        //     Node::AssignAttributeAccess(_) => todo!(),
+        //     Node::AssignLocalVar(_) => todo!(),
+        //     Node::Attribute(_) => todo!(),
+        //     Node::Binary(_) => todo!(),
+        //     Node::Call(call_node) => call_node.return_type.clone(),
+        //     Node::Class(_) => todo!(),
+        //     Node::Const(_) => todo!(),
+        //     Node::Def(_) => todo!(),
+        //     Node::DefE(_) => todo!(),
+        //     Node::Impl(_) => todo!(),
+        //     Node::Int(_) => todo!(),
+        //     Node::LocalVar(_) => todo!(),
+        //     Node::Loop(_) => todo!(),
+        //     Node::Module(_) => todo!(),
+        //     Node::Ret(_) => todo!(),
+        //     Node::SelfRef(_) => todo!(),
+        //     Node::Trait(_) => todo!(),
+        //     Node::AssignConstant(_) => todo!(),
+        // };
+
+
+        println!("asgn_lvar");
+        println!("{:#?}", asgn_lvar);
 
         match &return_type {
             Some(base_type) => {
@@ -1535,6 +2316,17 @@ impl<'c, 'm> Compiler<'c, 'm> {
                             return Ok(return_val);
                         }
                     }
+                    BaseType::Byte => {},
+                    BaseType::Int16 => {},
+                    BaseType::Int32 => {},
+                    BaseType::Int64 => {},
+                    BaseType::Array(_, _) => {},
+                    BaseType::Struct(_) => {
+                        ctx.lvars
+                            .insert(asgn_lvar.name.clone(), return_val.unwrap());
+                        // ctx.lvar_stores.insert(asgn_lvar.name.clone(), return_val.unwrap());
+                        return Ok(return_val);
+                    },
                 }
             }
             None => todo!(),
@@ -1625,24 +2417,100 @@ impl<'c, 'm> Compiler<'c, 'm> {
         Ok(return_val)
     }
 
+    pub fn node_base_type(&self, node: &Node) -> Option<BaseType> {
+        match node {
+            Node::Send(send_node) => send_node.return_type.clone(),
+            Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
+            Node::Access(node) => node.return_type.clone(),
+            Node::Array(array) => Some(BaseType::Array(array.length, Box::new(array.item_type.clone()))),
+            Node::BuildStruct(struct_node) => {
+                let entry = self.parser_result.index.struct_index.get(&struct_node.name).unwrap();
+                Some(entry.return_type.clone())
+            },
+            Node::Struct(_) => todo!(),
+            Node::AssignAttribute(_) => todo!(),
+            Node::AssignAttributeAccess(_) => todo!(),
+            Node::AssignLocalVar(_) => todo!(),
+            Node::Attribute(_) => todo!(),
+            Node::Binary(_) => todo!(),
+            Node::Call(call_node) => call_node.return_type.clone(),
+            Node::Class(_) => todo!(),
+            Node::Const(const_node) => {
+                let entry = self.parser_result.index.constant_index.get(&const_node.name);
+                Some(entry.unwrap().clone())
+            },
+            Node::Def(_) => todo!(),
+            Node::DefE(_) => todo!(),
+            Node::Impl(_) => todo!(),
+            Node::Int(_) => Some(BaseType::Int64),
+            Node::LocalVar(lvar) => lvar.return_type.clone(),
+            Node::Loop(_) => todo!(),
+            Node::Module(_) => todo!(),
+            Node::Ret(_) => todo!(),
+            Node::SelfRef(_) => todo!(),
+            Node::Trait(_) => todo!(),
+            Node::AssignConstant(_) => todo!(),
+        }
+    }
+
     fn basetype_to_mlir_type(&self, return_type: &BaseType) -> Type<'c> {
         match return_type {
-            BaseType::Int => IntegerType::new(&self.context, 64).into(),
-            BaseType::Void => todo!(),
+            BaseType::Int => self.llvm_types.i64_type.into(),
             BaseType::Class(name) => {
-                let struct_type = self.class_type_index.get(name).unwrap();
-                llvm::r#type::r#pointer(*struct_type, 0)
+                println!("class_name {:#?}", name);
+
+                println!("{:#?}", name);
+                match self.class_type_index.get(name) {
+                    Some(struct_type) => llvm::r#type::r#pointer(*struct_type, 0),
+                    None => {
+                        self.struct_type_index.get(name).unwrap().clone()
+                    },
+                }
             }
-            BaseType::BytePtr => self.llvm_types.i8_ptr_type.clone().into(),
+            BaseType::BytePtr => self.llvm_types.i8_ptr_type.into(),
+            BaseType::Byte => self.llvm_types.i8_type.into(),
+            BaseType::Int16 => self.llvm_types.i16_type.into(),
+            BaseType::Int32 => self.llvm_types.i32_type.into(),
+            BaseType::Int64 => self.llvm_types.i64_type.into(),
+            BaseType::Array(length, base_type) => llvm::r#type::array(self.basetype_to_mlir_type(base_type), *length as u32),
+            BaseType::Void => todo!(),
+            BaseType::Struct(struct_name) => {
+                self.struct_type_index.get(struct_name).unwrap().clone()
+            },
+            // BaseType::Struct(base_types) => todo!(),
         }
+    }
+}
+
+fn basetype_to_mlir_type<'c>(llvm_types: LlvmTypes<'c>, return_type: &BaseType) -> Type<'c> {
+    match return_type {
+        // Note Class is an opaque pointer here, but is a pointer to a struct in
+        // self.basetype_to_mlir_type
+        BaseType::Class(_) => llvm_types.ptr_type,
+
+        BaseType::Array(length, base_type) => llvm::r#type::array(basetype_to_mlir_type(llvm_types, base_type), *length as u32),
+        BaseType::Byte => llvm_types.i8_type.into(),
+        BaseType::BytePtr => llvm_types.i8_ptr_type.clone().into(),
+        BaseType::Int => llvm_types.i64_type.into(),
+        BaseType::Int16 => llvm_types.i16_type.into(),
+        BaseType::Int32 => llvm_types.i32_type.into(),
+        BaseType::Int64 => llvm_types.i64_type.into(),
+        BaseType::Void => todo!(),
+        BaseType::Struct(_) => todo!(),
     }
 }
 
 pub fn nilla_class_name(base_type: &BaseType) -> String {
     match base_type {
+        BaseType::Array(_, _) => "Array".to_string(),
+        BaseType::Byte => "Byte".to_string(),
         BaseType::BytePtr => "BytePtr".to_string(),
-        BaseType::Int => "Int".to_string(),
-        BaseType::Void => "".to_string(),
         BaseType::Class(class_name) => class_name.clone(),
+        BaseType::Int => "Int".to_string(),
+        BaseType::Int16 => "Int16".to_string(),
+        BaseType::Int32 => "Int32".to_string(),
+        BaseType::Int64 => "Int64".to_string(),
+        BaseType::Void => "".to_string(),
+        BaseType::Struct(_) => "Struct".to_string(),
     }
 }

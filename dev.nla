@@ -1,5 +1,15 @@
+def_e print_class(sock SockaddrIn)
 def_e print_int(int Int)
 def_e print_bytes(byte_ptr BytePtr, int Int)
+
+def_e perror(byte_ptr BytePtr)
+def_e exit(code Int32)
+
+def_e socket(family Int32, type Int32, protocol Int32) -> Int32
+def_e htons(hostshort Int16) -> Int16
+def_e htonl(hostshort Int32) -> Int32
+
+def_e bind(fd Int32, addr Sockaddr, addr_size Int32) -> Int32
 
 class Str
    @buffer BytePtr
@@ -11,30 +21,70 @@ def base_print(str Str)
    print_bytes(str.buffer, str.length)
 end
 
-class MyClass
-   @host Str
-
-   def agogo
-      base_print(@host)
-   end
+def base_print_error(str Str)
+   perror(str.buffer)
 end
 
-class OtherClass
-   @thing Str
 
-   def printer(instance MyClass)
-      instance.agogo()
-   end
+class KernelEvent
+   @ident  Int64   # identifier (e.g., file descriptor)
+   @filter Int16   # filter type (e.g., EVFILT_READ)
+   @flags  Int16   # action flags (e.g., EV_ADD)
+   @fflags Int32   # filter-specific flags
+   @data   Int64   # filter-specific data
+   @udata  BytePtr # opaque user data
 end
+
+class SockaddrIn
+   @sin_len    Byte       # length of structure (16)
+   @sin_family Byte       # AF_INET
+   @sin_port   Int16      # 16-bit TCP or UDP port number (network byte ordered)
+   @sin_addr   InAddr     # 32-bit IPv4 address (network byte ordered)
+   @sin_zero   [8 x Byte] # unused
+end
+
+struct InAddr
+   @s_addr Int32 # 32-bit IPv4 address (network byte ordered)
+end
+
+class Sockaddr
+   @sa_len    Byte
+   @sa_family Byte        # address family: AF_xxx value
+   @sa_data   [14 x Byte] # protocol-specific address
+end
+
+class Timespec
+   @tv_sec  Int64
+   @tv_nsec Int64
+end
+
+AF_INET     Byte = 2 # IPv4 protocols
+SOCK_STREAM Int32 = 1 # stream socket type
+PROTOCOL    Int32 = 0 # zero for default (tcp/udp/sctp)
+
+INADDR_ANY  Int32 = 0
+
+SOCKADDR_SIZE Int32 = 16
+
+ZEROE Byte  = 0
+ZEROS Int64 = 0
 
 def main
-   instance = MyClass.new("localhost")
-   instance.agogo()
+   socket_listen_fd = socket(AF_INET, SOCK_STREAM, PROTOCOL)
 
-   other_instance = OtherClass.new("other_instance")
-   other_instance.printer(instance)
+   print_int(socket_listen_fd)
 
-   instance.host = "newhost"
+   #port = htons(1337)
+   port = 1337
+   in_addr = InAddr(INADDR_ANY)
+   empty_data = [0, 0, 0, 0, 0, 0, 0, 0]
+   serv_addr = SockaddrIn.new(ZEROE, AF_INET, port, in_addr, empty_data)
 
-   other_instance.printer(instance)
+   # print_int(serv_addr.sin_port)
+   # print_class(serv_addr)
+
+   bind_result = bind(socket_listen_fd, serv_addr, SOCKADDR_SIZE)
+
+   print_int(bind_result)
+   base_print_error("Noo")
 end

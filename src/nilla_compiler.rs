@@ -18,8 +18,12 @@ impl NillaCompiler {
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
 
+        println!("{:#?}", tokens);
+
+
         let mut precedence_map = NillaCompiler::build_op_precedence_map();
         let mut parser_result = Parser::start_parse(tokens, &mut precedence_map);
+
 
         SemanticAnalyzer::run(&mut parser_result);
 

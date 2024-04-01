@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     hash::Hash,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut}, fs::OpenOptions,
 };
 
 use melior::ir::attribute;
@@ -14,6 +14,13 @@ pub struct Access {
     pub message: Box<Node>,
     pub index: i32,
     pub return_type: Option<BaseType>,
+}
+
+#[derive(Debug)]
+pub struct Array {
+    pub items: Vec<Node>,
+    pub item_type: BaseType,
+    pub length: i64,
 }
 
 #[derive(Debug)]
@@ -40,6 +47,13 @@ pub struct AssignAttributeAccess {
 pub struct AssignLocalVar {
     pub name: String,
     pub value: Box<Node>,
+}
+
+#[derive(Debug)]
+pub struct AssignConstant {
+    pub name: String,
+    pub value: Box<Node>,
+    pub return_type: BaseType,
 }
 
 #[derive(Debug)]
@@ -83,10 +97,16 @@ impl LocalVar {
     pub fn nilla_class_name(&self) -> &str {
         match &self.return_type {
             Some(rt) => match rt {
-                BaseType::Int => "Int",
-                BaseType::Void => "",
-                BaseType::Class(class_name) => class_name.as_str(),
+                BaseType::Array(_, _) => "Array",
+                BaseType::Byte => "Byte",
                 BaseType::BytePtr => "BytePtr",
+                BaseType::Class(class_name) => class_name.as_str(),
+                BaseType::Int => "Int",
+                BaseType::Int16 => "Int16",
+                BaseType::Int32 => "Int32",
+                BaseType::Int64 => "Int64",
+                BaseType::Void => "",
+                BaseType::Struct(_) => "Struct",
             },
             None => "",
         }
@@ -101,7 +121,21 @@ pub struct Module {
 #[derive(Debug)]
 pub struct Class {
     pub name: String,
-    pub attributes: Vec<Node>,
+    pub attributes: Vec<Attribute>,
+}
+
+#[derive(Debug)]
+pub struct Struct {
+    pub name: String,
+    pub attributes: Vec<Attribute>,
+    pub return_type: BaseType,
+}
+
+#[derive(Debug)]
+pub struct BuildStruct {
+    pub name: String,
+    pub args: Vec<Node>,
+    pub return_type: BaseType,
 }
 
 #[derive(Debug)]
@@ -134,11 +168,14 @@ pub struct Const {
 #[derive(Debug)]
 pub enum Node {
     Access(Access),
+    Array(Array),
     AssignAttribute(AssignAttribute),
     AssignAttributeAccess(AssignAttributeAccess),
+    AssignConstant(AssignConstant),
     AssignLocalVar(AssignLocalVar),
     Attribute(Attribute),
     Binary(Binary),
+    BuildStruct(BuildStruct),
     Call(Call),
     Class(Class),
     Const(Const),
@@ -153,18 +190,32 @@ pub enum Node {
     SelfRef(SelfRef),
     Send(Send),
     StringLiteral(StringLiteral),
+    Struct(Struct),
     Trait(Trait),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BaseType {
-    BytePtr,
-    Int,
-    Void,
+    // Integer Types
+    Byte,
+    Int, // Int64 by default
+    Int16,
+    Int32,
+    Int64,
+
+    // Dynamic Types
+    Array(i64, Box<BaseType>),
     Class(String),
+    Struct(String),
+
+    // Pointer Types
+    BytePtr,
+
+    // To Remove
+    Void,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Arg {
     pub name: String,
     pub return_type: BaseType,
@@ -173,15 +224,21 @@ pub struct Arg {
 impl Arg {
     pub fn nilla_class_name(&self) -> &str {
         match &self.return_type {
+            BaseType::Array(_, _) => "Array",
+            BaseType::Byte => "Byte",
             BaseType::BytePtr => "BytePtr",
-            BaseType::Int => "Int",
-            BaseType::Void => "",
             BaseType::Class(class_name) => class_name.as_str(),
+            BaseType::Int => "Int",
+            BaseType::Int16 => "Int16",
+            BaseType::Int32 => "Int32",
+            BaseType::Int64 => "Int64",
+            BaseType::Struct(_) => "Struct",
+            BaseType::Void => "",
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Prototype {
     pub name: String,
     pub args: Vec<Arg>,
@@ -220,6 +277,9 @@ pub struct ParserResult {
 pub struct ParserResultIndex {
     pub trait_index: HashMap<String, Vec<Class>>,
     pub class_index: HashMap<String, Class>,
+    pub struct_index: HashMap<String, Struct>,
+    pub constant_index: HashMap<String, BaseType>,
+    pub fn_prototype_index: HashMap<String, Prototype>,
 }
 
 #[derive(Debug)]
@@ -266,6 +326,9 @@ impl<'a> Parser<'a> {
             index: ParserResultIndex {
                 trait_index: HashMap::new(),
                 class_index: HashMap::new(),
+                struct_index: HashMap::new(),
+                constant_index: HashMap::new(),
+                fn_prototype_index: HashMap::new(),
             },
         };
 
@@ -293,7 +356,9 @@ impl<'a> Parser<'a> {
             }
 
             let results = match self.current()? {
+                Token::Const(pos, name) => self.parse_constant_assignment_expr(&mut mctx),
                 Token::Class => self.parse_class(&mut mctx),
+                Token::Struct => self.parse_struct(&mut mctx),
                 Token::Trait => self.parse_trait(&mut mctx),
                 Token::Def => self.parse_def(
                     &mut mctx,
@@ -322,6 +387,75 @@ impl<'a> Parser<'a> {
         // })
     }
 
+    // fn parse_comment(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
+    //     match self.curr() {
+    //         Token::Comment(pos, text) => {
+    //             self.advance()?;
+    //             self.advance_optional_whitespace();
+
+    //             Ok(vec![Node::Comment(Comment { text })])
+    //         }
+    //         _ => return Err("Expected const node")
+    //     }
+    // }
+
+    fn parse_constant_assignment_expr(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
+        println!("{:#?}", self.curr());
+
+        let name =
+            match self.current()? {
+                Token::Const(pos, name) => {
+                    self.advance()?;
+                    self.advance_optional_whitespace();
+
+                    name
+                }
+                _ => return Err("Expected const node")
+            };
+
+        println!("name {:#?}", name);
+        println!("{:#?}", self.curr());
+
+        let return_type = match self.current()? {
+            Token::Const(_type_pos, type_name) => {
+                self.advance();
+                self.advance_optional_whitespace();
+
+                self.class_base_type(type_name)
+            }
+            _ => return Err("Expected type for constant")
+        };
+
+        println!("{:#?}", self.curr());
+
+        match self.current()? {
+            Token::Assign => {
+                self.advance();
+                self.advance_optional_whitespace();
+            },
+            _ => return Err("Expected constant assignment"),
+        };
+
+        let value = Box::new(self.parse_constant_value_expr(mctx).unwrap());
+
+        self.index.constant_index.insert(name.clone(), return_type.clone());
+
+        Ok(vec![Node::AssignConstant(AssignConstant { name, value, return_type })])
+        // Ok(vec![])
+    }
+
+    fn parse_constant_value_expr(&mut self, mctx: &mut ParserModuleCtx) -> Result<Node, &'static str> {
+        self.parse_nb_expr()
+
+        // match self.current()? {
+        //     Token::Number(pos, value) => Ok(Node::Int(Int { value })),
+        //     // Token::LSquareBrace => todo!(),
+        //     // Token::StringLiteral(_, _) => todo!(),
+        //     // Token::Const(_, _) => todo!(),
+        //     _ => todo!()
+        // }
+    }
+
     fn parse_class(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
         // Advance past the keyword
         self.pos += 1;
@@ -343,40 +477,7 @@ impl<'a> Parser<'a> {
             _ => return Err("Expected a new line after class name"),
         };
 
-        // parse attributes
-        let mut attributes = vec![];
-        let mut index = 0;
-        loop {
-            self.advance_optional_whitespace();
-
-            match self.current()? {
-                Token::Attribute(_attr_pos, attr_name) => {
-                    self.advance();
-                    self.advance_optional_whitespace();
-
-                    match self.current()? {
-                        Token::Const(_type_pos, type_name) => {
-                            self.advance();
-
-                            let return_type = match type_name.as_str() {
-                                "Int" => BaseType::Int,
-                                "BytePtr" => BaseType::BytePtr,
-                                _ => BaseType::Class(type_name),
-                            };
-
-                            attributes.push(Node::Attribute(Attribute {
-                                name: attr_name,
-                                index,
-                                return_type,
-                            }));
-                            index += 1;
-                        }
-                        _ => return Err("Expected a type after the attribute name"),
-                    }
-                }
-                _ => break,
-            };
-        }
+        let attributes = self.parse_attributes().unwrap();
 
         let class_node = Class {
             name: class_name.clone(),
@@ -426,33 +527,35 @@ impl<'a> Parser<'a> {
 
             let mut body = vec![];
 
-            for (index, node) in class_node.attributes.iter().enumerate() {
-                if let Node::Attribute(attribute) = node {
-                    args.push(Arg {
-                        name: attribute.name.clone(),
-                        return_type: attribute.return_type.clone(),
-                    });
+            for (index, attribute) in class_node.attributes.iter().enumerate() {
+                args.push(Arg {
+                    name: attribute.name.clone(),
+                    return_type: attribute.return_type.clone(),
+                });
 
-                    body.push(Node::AssignAttribute(AssignAttribute {
+                body.push(Node::AssignAttribute(AssignAttribute {
+                    name: attribute.name.clone(),
+                    index: index as i32,
+                    value: Box::new(Node::LocalVar(LocalVar {
                         name: attribute.name.clone(),
-                        index: index as i32,
-                        value: Box::new(Node::LocalVar(LocalVar {
-                            name: attribute.name.clone(),
-                            return_type: Some(attribute.return_type.clone()),
-                        })),
-                    }))
-                }
+                        return_type: Some(attribute.return_type.clone()),
+                    })),
+                }))
             }
+
+            let prototype = Prototype {
+                name: format!("{}.new", mctx.class_name.clone()).to_string(),
+                args,
+                return_type: Some(BaseType::Class(class_name.clone())),
+                is_op: false,
+                prec: 0,
+            };
+
+            self.index.fn_prototype_index.insert(prototype.name.clone(), prototype.clone());
 
             let new_fn = Node::Def(Def {
                 main_fn: false,
-                prototype: Prototype {
-                    name: format!("{}.new", mctx.class_name.clone()).to_string(),
-                    args,
-                    return_type: Some(BaseType::Class(class_name.clone())),
-                    is_op: false,
-                    prec: 0,
-                },
+                prototype,
                 body,
                 class_name: mctx.class_name.clone(),
                 impl_name: "".to_string(),
@@ -470,6 +573,129 @@ impl<'a> Parser<'a> {
         mctx.self_node = None;
 
         Ok(functions)
+    }
+
+    fn parse_struct(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
+        // Advance past the keyword
+        self.pos += 1;
+
+        self.advance_optional_space();
+
+        let (pos, struct_name) = match self.current()? {
+            Token::Const(pos, name) => {
+                self.advance()?;
+                (pos, name)
+            }
+            _ => return Err("Expected identifier in prototype declaration."),
+        };
+
+        self.advance_optional_space();
+
+        match self.curr() {
+            Token::NewLine(_) => self.advance(),
+            _ => return Err("Expected a new line after class name"),
+        };
+
+        let attributes = self.parse_attributes().unwrap();
+
+        match self.current()? {
+            Token::End => {
+                self.advance();
+                self.advance_optional_whitespace();
+            }
+            _ => return Err("Expected End to struct")
+        }
+
+        // let attr_return_types = attributes.iter().map(|attr| attr.return_type.clone()).collect();
+        let return_type = BaseType::Struct(struct_name.clone());
+
+        let struct_struct = Struct {
+            name: struct_name.clone(),
+            attributes,
+            return_type,
+        };
+
+        self.index
+            .struct_index
+            .insert(struct_name.clone(), struct_struct);
+
+        mctx.class_name = "".to_string();
+        mctx.self_node = None;
+
+        Ok(vec![])
+    }
+
+    fn parse_attributes(&mut self) -> Result<Vec<Attribute>, &'static str> {
+        let mut attributes = vec![];
+        let mut index = 0;
+        loop {
+            self.advance_optional_whitespace();
+
+            match self.current()? {
+                Token::Attribute(_attr_pos, attr_name) => {
+                    self.advance();
+                    self.advance_optional_whitespace();
+
+                    let return_type =
+                        match self.current()? {
+                            Token::Const(_type_pos, type_name) => {
+                                self.advance();
+                                self.class_base_type(type_name)
+                            }
+                            Token::LSquareBrace => {
+                                self.advance();
+
+                                let length = match self.current()? {
+                                    Token::Number(_, n) => n,
+                                    _ => return Err("Expected length of array")
+                                };
+
+                                self.advance();
+                                self.advance_optional_space();
+
+                                match self.current()? {
+                                    Token::Ident(_, sym) => {
+                                        match sym.as_str() {
+                                            "x" => {
+                                                self.advance();
+                                                self.advance_optional_space();
+                                            },
+                                            _ => return Err("Expected an 'x' for such as [4 x Byte]"),
+                                        }
+                                    }
+                                    _ => return Err("Expected type for array 1")
+                                };
+
+                                let array_return_type = match self.current()? {
+                                    Token::Const(_type_pos, type_name) => {
+                                        self.advance();
+                                        self.class_base_type(type_name)
+                                    }
+                                    _ => return Err("Expected type for array 2")
+                                };
+
+                                match self.current()? {
+                                    Token::RSquareBrace => self.advance(),
+                                    _ => return Err("Expected ] to end array type")
+                                };
+
+                                BaseType::Array(length as i64, Box::new(array_return_type))
+                            }
+                            _ => return Err("Expected a type after the attribute name"),
+                        };
+
+                    attributes.push(Attribute {
+                        name: attr_name,
+                        index,
+                        return_type,
+                    });
+                    index += 1;
+                }
+                _ => break,
+            };
+        }
+
+        Ok(attributes)
     }
 
     fn parse_trait(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
@@ -648,6 +874,10 @@ impl<'a> Parser<'a> {
             trait_name,
         };
 
+        // let namespaced_fn_name = format!("{}.{}", mctx.class_name.clone(), def_node.prototype.name.clone());
+        // self.index.fn_prototype_index.insert(namespaced_fn_name, def_node.prototype.clone());
+        self.index.fn_prototype_index.insert(def_node.prototype.name.clone(), def_node.prototype.clone());
+
         Ok(vec![Node::Def(def_node)])
 
         // let mut arg_return_types = vec![];
@@ -697,6 +927,10 @@ impl<'a> Parser<'a> {
         //     arg_return_types.push(arg.return_type.clone());
         // }
         // self.index.fn_index.insert(fn_name, arg_return_types);
+
+        // let namespaced_fn_name = format!(".{}", def_e_node.prototype.name.clone());
+        // self.index.fn_prototype_index.insert(namespaced_fn_name, def_e_node.prototype.clone());
+        self.index.fn_prototype_index.insert(def_e_node.prototype.name.clone(), def_e_node.prototype.clone());
 
         Ok(vec![Node::DefE(def_e_node)])
     }
@@ -774,6 +1008,8 @@ impl<'a> Parser<'a> {
         loop {
             self.advance_optional_whitespace();
 
+            // println!("{:#?}", self.curr());
+
             let arg_name = match self.curr() {
                 Token::Ident(pos, name) => name,
                 _ => return Err("Expected identifier in parameter declaration."),
@@ -782,15 +1018,51 @@ impl<'a> Parser<'a> {
             self.advance()?;
             self.advance_optional_space();
 
-            let type_name = match self.curr() {
-                Token::Const(pos, type_name) => type_name,
-                _ => return Err("Expected type name for argument"),
-            };
+            let return_type = match self.curr() {
+                Token::Const(pos, type_name) => {
+                    self.class_base_type(type_name)
+                },
+                Token::LSquareBrace => {
+                    self.advance();
 
-            let return_type = match type_name.as_str() {
-                "Int" => BaseType::Int,
-                "BytePtr" => BaseType::BytePtr,
-                _ => BaseType::Class(type_name),
+                    let length = match self.current()? {
+                        Token::Number(_, n) => n,
+                        _ => return Err("Expected length of array")
+                    };
+
+                    self.advance_optional_space();
+
+                    match self.current()? {
+                        Token::Ident(_, sym) => {
+                            self.advance();
+
+                            match sym.as_str() {
+                                "x" => {
+                                    self.advance();
+                                    self.advance_optional_space();
+                                },
+                                _ => return Err("Expected an 'x' for such as [4 x Byte]"),
+                            }
+                        }
+                        _ => return Err("Expected type for array 3")
+                    };
+
+                    let array_return_type = match self.current()? {
+                        Token::Const(_type_pos, type_name) => {
+                            self.advance();
+                            self.class_base_type(type_name)
+                        }
+                        _ => return Err("Expected type for array 4")
+                    };
+
+                    match self.current()? {
+                        Token::RSquareBrace => self.advance(),
+                        _ => return Err("Expected ] to end array type")
+                    };
+
+                    BaseType::Array(length as i64, Box::new(array_return_type))
+                }
+                _ => return Err("Expected type name for argument"),
             };
 
             args.push(Arg {
@@ -827,24 +1099,25 @@ impl<'a> Parser<'a> {
     fn parse_return_type(&mut self) -> Result<Option<BaseType>, &'static str> {
         match self.current()? {
             Token::NewLine(_) => {
-                self.advance();
+                self.advance()?;
                 return Ok(None);
             }
             Token::Arrow => {
-                self.advance();
+                self.advance()?;
+                self.advance_optional_space();
             }
             Token::Space(_) => {
-                self.advance();
+                self.advance_optional_space();
 
                 match self.curr() {
                     Token::Arrow => {
-                        self.advance();
+                        self.advance()?;
                         self.advance_optional_space();
                     }
-                    Token::NewLine(_) => {
-                        self.advance();
-                        return Ok(None);
-                    }
+                    // Token::NewLine(_) => {
+                    //     self.advance();
+                    //     return Ok(None);
+                    // }
                     _ => return Err("Expected an arrow to indicate a return type"),
                 }
             }
@@ -852,23 +1125,9 @@ impl<'a> Parser<'a> {
         }
 
         match self.curr() {
-            Token::Const(pos, name) => match name.as_ref() {
-                "Str" => {
-                    self.advance();
-                    Ok(Some(BaseType::Class("Str".to_string())))
-                }
-                "Int" => {
-                    self.advance();
-                    Ok(Some(BaseType::Int))
-                }
-                "BytePtr" => {
-                    self.advance();
-                    Ok(Some(BaseType::BytePtr))
-                }
-                _ => {
-                    self.advance();
-                    Ok(Some(BaseType::Class(name)))
-                }
+            Token::Const(pos, type_name) => {
+                self.advance()?;
+                Ok(Some(self.class_base_type(type_name)))
             },
             _ => Err("Expected a return type after an arrow"),
         }
@@ -923,17 +1182,21 @@ impl<'a> Parser<'a> {
 
         let node = match self.curr() {
             Token::Attribute(_, _) => self.parse_attribute_expr(mctx, ctx),
-            Token::Const(_, _) => self.parse_const_expr(),
+            Token::Const(_, _) => self.parse_const_expr(mctx, ctx),
             Token::Ident(_, _) => self.parse_ident_expr(mctx, ctx),
             Token::Loop => self.parse_loop_expr(mctx, ctx),
             Token::LParen => self.parse_paren_expr(mctx, ctx),
+            Token::LSquareBrace => self.parse_array_expr(mctx, ctx),
             Token::Number(_, _) => self.parse_nb_expr(),
             Token::Ret => self.parse_ret_expr(mctx, ctx),
             Token::SelfRef => self.parse_self_ref_expr(mctx, ctx),
             Token::StringLiteral(_, _) => self.parse_string_expr(),
             _ => {
-                panic!("{:#?}", self.curr());
-                panic!("{:#?}", self);
+                println!("Debug:");
+                println!("{:#?}", self.curr());
+
+                // panic!("{:#?}", self.curr());
+                // panic!("{:#?}", self);
                 Err("Unknown expression.")
             }
         };
@@ -1103,11 +1366,27 @@ impl<'a> Parser<'a> {
                             Some(asgnLvar) => match asgnLvar {
                                 Node::AssignLocalVar(asgnLvar) => {
                                     let return_type_name = match asgnLvar.value.as_ref() {
+                                            Node::Call(call) => self.nilla_class_name(&call.return_type),
                                             Node::Int(_) => "Int".to_string(),
-                                            Node::StringLiteral(_) => "Str".to_string(),
                                             Node::LocalVar(val) => val.nilla_class_name().to_string(),
                                             Node::Send(send) => self.nilla_class_name(&send.return_type),
-                                            _ => return Err("Local variable assignment was given an unsupprted node, given")
+                                            Node::StringLiteral(_) => "Str".to_string(),
+                                            Node::BuildStruct(build) => {
+                                                return Ok(Node::LocalVar(LocalVar {
+                                                    name: ident_name,
+                                                    return_type: Some(build.return_type.clone()),
+                                                }))
+                                            }
+                                            Node::Array(array) => {
+                                                return Ok(Node::LocalVar(LocalVar {
+                                                    name: ident_name,
+                                                    return_type: Some(BaseType::Array(array.length, Box::new(array.item_type.clone()))),
+                                                }))
+                                            }
+                                            _ => {
+                                                println!("{:#?}", asgnLvar.value.as_ref());
+                                                return Err("Local variable assignment was given an unsupprted node, given")
+                                            }
                                         };
 
                                     Ok(Node::LocalVar(LocalVar {
@@ -1225,6 +1504,10 @@ impl<'a> Parser<'a> {
             Node::Send(_) => todo!(),
             Node::StringLiteral(_) => todo!(),
             Node::Trait(_) => todo!(),
+            Node::AssignConstant(_) => todo!(),
+            Node::Struct(_) => todo!(),
+            Node::BuildStruct(_) => todo!(),
+            Node::Array(_) => todo!(),
         }
     }
 
@@ -1276,13 +1559,62 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_const_expr(&mut self) -> Result<Node, &'static str> {
-        match self.curr() {
-            Token::Const(pos, string) => {
+    fn parse_const_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
+        // match self.curr() {
+        //     Token::Const(pos, string) => {
+        //         self.advance();
+        //         Ok(Node::Const(Const { name: string }))
+        //     }
+        //     _ => Err("Expected string literal."),
+        // }
+
+        let const_name = match self.curr() {
+            Token::Const(pos, name) => {
                 self.advance();
-                Ok(Node::Const(Const { name: string }))
+                name
             }
-            _ => Err("Expected string literal."),
+            _ => return Err("Expected string literal."),
+        };
+
+        match self.curr() {
+            Token::LParen => {
+                self.advance()?;
+                self.advance_optional_whitespace();
+
+                if let Token::RParen = self.curr() {
+                    return Err("At least one struct field is required")
+                }
+
+                let mut args = vec![];
+
+                loop {
+                    self.advance_optional_whitespace();
+
+                    args.push(self.parse_expr(mctx, ctx)?);
+
+                    self.advance_optional_whitespace();
+
+                    match self.curr() {
+                        Token::RParen => {
+                            self.advance();
+                            break;
+                        }
+                        Token::Comma => {
+                            self.advance();
+                        }
+                        _ => return Err("Expected ',' or ')' character in struct build."),
+                    }
+                }
+
+                Ok(Node::BuildStruct(BuildStruct { name: const_name.clone(), args, return_type: BaseType::Struct(const_name.clone()) }))
+            }
+            _ => {
+                Ok(Node::Const(Const { name: const_name }))
+            }
         }
     }
 
@@ -1310,6 +1642,58 @@ impl<'a> Parser<'a> {
         };
 
         Ok(expr)
+    }
+
+    fn parse_array_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+        ctx: &ParserFunctionCtx,
+    ) -> Result<Node, &'static str> {
+        match self.current()? {
+            Token::LSquareBrace => (),
+            _ => return Err("Expected '[' character at start of an array."),
+        }
+
+        self.advance_optional_whitespace();
+        self.advance()?;
+
+        let mut items = vec![];
+
+        match self.current()? {
+            Token::RSquareBrace => {
+                self.advance()?;
+                let default_type = BaseType::Byte;
+                return Ok(Node::Array(Array { items, item_type: default_type, length: 0 }))
+            },
+            _ => {}
+        }
+
+        loop {
+            self.advance_optional_whitespace();
+
+            items.push(self.parse_expr(mctx, ctx)?);
+
+            self.advance_optional_whitespace();
+
+            match self.curr() {
+                Token::RSquareBrace => {
+                    self.advance();
+                    break;
+                }
+                Token::Comma => {
+                    self.advance();
+                }
+                _ => return Err("Expected ',' or ']' character in array."),
+            }
+        }
+
+        // Hardcode byte for now. Use semantic analysis to look at the first
+        // element for dynamic types
+        let item_type = BaseType::Byte;
+
+        let length = items.len() as i64;
+
+        Ok(Node::Array(Array { items, item_type, length }))
     }
 
     fn parse_loop_expr(
@@ -1450,6 +1834,9 @@ impl<'a> Parser<'a> {
                 Token::NewLine(_) => {
                     self.advance();
                 }
+                Token::Comment(_, _) => {
+                    self.advance();
+                }
                 _ => break,
             }
         }
@@ -1485,12 +1872,32 @@ impl<'a> Parser<'a> {
     pub fn nilla_class_name(&self, return_type: &'a Option<BaseType>) -> String {
         match return_type {
             Some(rt) => match rt {
-                BaseType::Int => "Int".to_string(),
-                BaseType::Void => "".to_string(),
-                BaseType::Class(class_name) => class_name.to_string(),
+                BaseType::Array(_, _) => "Array".to_string(),
+                BaseType::Byte => "Byte".to_string(),
                 BaseType::BytePtr => "BytePtr".to_string(),
+                BaseType::Class(class_name) => class_name.to_string(),
+                BaseType::Int => "Int".to_string(),
+                BaseType::Int16 => "Int16".to_string(),
+                BaseType::Int32 => "Int32".to_string(),
+                BaseType::Int64 => "Int64".to_string(),
+                BaseType::Void => "".to_string(),
+                BaseType::Struct(_) => "Struct".to_string(),
             },
             None => "".to_string(),
+        }
+    }
+
+    pub fn class_base_type(&self, type_name: String) -> BaseType {
+        match type_name.as_str() {
+            // "Array" => BaseType::Array(_, _),
+            "Byte" => BaseType::Byte,
+            "BytePtr" => BaseType::BytePtr,
+            "Int" => BaseType::Int,
+            "Int16" => BaseType::Int16,
+            "Int32" => BaseType::Int32,
+            "Int64" => BaseType::Int64,
+            _name => BaseType::Class(_name.to_string())
+            // BaseType::Void => "".to_string(),
         }
     }
 }
