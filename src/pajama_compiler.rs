@@ -7,7 +7,7 @@ use melior::utility::{register_all_dialects, register_all_llvm_translations};
 use melior::{pass, Context, ExecutionEngine};
 
 use crate::lexer::Lexer;
-use crate::mlir_codegen::Compiler;
+use crate::codegen::Compiler;
 use crate::parser::Parser;
 use crate::semantic_analyzer::SemanticAnalyzer;
 

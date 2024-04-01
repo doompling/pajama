@@ -1,8 +1,8 @@
-mod lexer;
-mod mlir_codegen;
 mod pajama_compiler;
+mod lexer;
 mod parser;
 mod semantic_analyzer;
+mod codegen;
 
 use pajama_compiler::PajamaCompiler;
 
