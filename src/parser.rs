@@ -94,7 +94,7 @@ pub struct LocalVar {
 }
 
 impl LocalVar {
-    pub fn nilla_class_name(&self) -> &str {
+    pub fn pajama_class_name(&self) -> &str {
         match &self.return_type {
             Some(rt) => match rt {
                 BaseType::Array(_, _) => "Array",
@@ -222,7 +222,7 @@ pub struct Arg {
 }
 
 impl Arg {
-    pub fn nilla_class_name(&self) -> &str {
+    pub fn pajama_class_name(&self) -> &str {
         match &self.return_type {
             BaseType::Array(_, _) => "Array",
             BaseType::Byte => "Byte",
@@ -1366,10 +1366,10 @@ impl<'a> Parser<'a> {
                             Some(asgnLvar) => match asgnLvar {
                                 Node::AssignLocalVar(asgnLvar) => {
                                     let return_type_name = match asgnLvar.value.as_ref() {
-                                            Node::Call(call) => self.nilla_class_name(&call.return_type),
+                                            Node::Call(call) => self.pajama_class_name(&call.return_type),
                                             Node::Int(_) => "Int".to_string(),
-                                            Node::LocalVar(val) => val.nilla_class_name().to_string(),
-                                            Node::Send(send) => self.nilla_class_name(&send.return_type),
+                                            Node::LocalVar(val) => val.pajama_class_name().to_string(),
+                                            Node::Send(send) => self.pajama_class_name(&send.return_type),
                                             Node::StringLiteral(_) => "Str".to_string(),
                                             Node::BuildStruct(build) => {
                                                 return Ok(Node::LocalVar(LocalVar {
@@ -1407,7 +1407,7 @@ impl<'a> Parser<'a> {
                                     Some(arg) => Ok(Node::LocalVar(LocalVar {
                                         name: ident_name,
                                         return_type: Some(BaseType::Class(
-                                            arg.nilla_class_name().to_string(),
+                                            arg.pajama_class_name().to_string(),
                                         )),
                                     })),
                                     None => Err("Local variable isn't assigned anywhere"),
@@ -1869,7 +1869,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn nilla_class_name(&self, return_type: &'a Option<BaseType>) -> String {
+    pub fn pajama_class_name(&self, return_type: &'a Option<BaseType>) -> String {
         match return_type {
             Some(rt) => match rt {
                 BaseType::Array(_, _) => "Array".to_string(),

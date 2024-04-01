@@ -1136,13 +1136,13 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     i32_type.const_int(string.len() as u64, false).as_basic_value_enum().into()
                 ];
 
-                let nilla_str_ptr = self.builder.build_call(malloc_string_fn, args, "tmp")
+                let pajama_str_ptr = self.builder.build_call(malloc_string_fn, args, "tmp")
                     .try_as_basic_value()
                     .left()
                     .unwrap();
 
                 // Ok(ReturnValue::ArrayPtrValue(global_str.as_pointer_value()))
-                Ok(ReturnValue::ArrayPtrValue(nilla_str_ptr.as_basic_value_enum().into_pointer_value()))
+                Ok(ReturnValue::ArrayPtrValue(pajama_str_ptr.as_basic_value_enum().into_pointer_value()))
             },
 
             Expr::Number(nb) => Ok(ReturnValue::FloatValue(self.context.f64_type().const_float(*nb))),

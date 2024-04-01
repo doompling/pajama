@@ -1,10 +1,10 @@
 mod lexer;
 mod mlir_codegen;
-mod nilla_compiler;
+mod pajama_compiler;
 mod parser;
 mod semantic_analyzer;
 
-use nilla_compiler::NillaCompiler;
+use pajama_compiler::PajamaCompiler;
 
 use mimalloc_rust::raw::basic_allocation::*;
 use mimalloc_rust::GlobalMiMalloc;
@@ -14,5 +14,5 @@ static GLOBAL_MIMALLOC: GlobalMiMalloc = GlobalMiMalloc;
 
 pub fn main() {
     let input = std::fs::read_to_string("dev.nla").unwrap();
-    NillaCompiler::compile(&input);
+    PajamaCompiler::compile(&input);
 }

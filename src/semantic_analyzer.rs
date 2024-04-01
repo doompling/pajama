@@ -443,7 +443,7 @@ fn visit_access_node(
             let latest_return_type = lvar_index.get(&lvar.name).unwrap();
             lvar.return_type = latest_return_type.clone();
 
-            nilla_class_name(&lvar.return_type.as_ref().unwrap())
+            pajama_class_name(&lvar.return_type.as_ref().unwrap())
         }
         Node::Access(_) => todo!(),
         Node::AssignAttribute(_) => todo!(),
@@ -461,7 +461,7 @@ fn visit_access_node(
         Node::Loop(_) => todo!(),
         Node::Module(_) => todo!(),
         Node::Ret(_) => todo!(),
-        Node::SelfRef(self_ref) => nilla_class_name(&self_ref.return_type),
+        Node::SelfRef(self_ref) => pajama_class_name(&self_ref.return_type),
         Node::Send(_) => todo!(),
         Node::StringLiteral(_) => todo!(),
         Node::Trait(_) => todo!(),
@@ -583,7 +583,7 @@ fn visit_send_node(
         _ => None,
     };
 
-    let class_name = nilla_class_name(&basetype.as_ref().unwrap());
+    let class_name = pajama_class_name(&basetype.as_ref().unwrap());
     let message_name = match send_node.message.as_mut() {
         Node::Call(node) => {
             let prefixed_name = format!("{}.{}", class_name, &node.fn_name);
@@ -660,7 +660,7 @@ fn visit_build_struct_node(
     Some(return_type)
 }
 
-pub fn nilla_class_name(base_type: &BaseType) -> String {
+pub fn pajama_class_name(base_type: &BaseType) -> String {
     match base_type {
         BaseType::Array(_, _) => "Array".to_string(),
         BaseType::Byte => "Byte".to_string(),

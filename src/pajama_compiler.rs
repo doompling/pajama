@@ -11,9 +11,9 @@ use crate::mlir_codegen::Compiler;
 use crate::parser::Parser;
 use crate::semantic_analyzer::SemanticAnalyzer;
 
-pub struct NillaCompiler {}
+pub struct PajamaCompiler {}
 
-impl NillaCompiler {
+impl PajamaCompiler {
     pub fn compile(input: &str) {
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize();
@@ -21,7 +21,7 @@ impl NillaCompiler {
         println!("{:#?}", tokens);
 
 
-        let mut precedence_map = NillaCompiler::build_op_precedence_map();
+        let mut precedence_map = PajamaCompiler::build_op_precedence_map();
         let mut parser_result = Parser::start_parse(tokens, &mut precedence_map);
 
 
@@ -30,7 +30,7 @@ impl NillaCompiler {
         println!("ParserResult after analysis: ######");
         println!("{:#?}", parser_result);
 
-        let mlir_context = NillaCompiler::create_mlir_context();
+        let mlir_context = PajamaCompiler::create_mlir_context();
         let location = Location::unknown(&mlir_context);
         let mut mlir_module = Module::new(location);
         let mut compiler = Compiler::new(&mlir_context, &mlir_module, &parser_result);

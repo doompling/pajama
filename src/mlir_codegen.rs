@@ -2500,7 +2500,7 @@ fn basetype_to_mlir_type<'c>(llvm_types: LlvmTypes<'c>, return_type: &BaseType) 
     }
 }
 
-pub fn nilla_class_name(base_type: &BaseType) -> String {
+pub fn pajama_class_name(base_type: &BaseType) -> String {
     match base_type {
         BaseType::Array(_, _) => "Array".to_string(),
         BaseType::Byte => "Byte".to_string(),
