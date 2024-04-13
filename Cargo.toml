@@ -10,6 +10,7 @@ libc = "0.2.146"
 # melior = "0.16.2"
 melior = { path = "../melior/melior" }
 mimalloc-rust = "0.2.1"
+mio = { version = "0.8.11", features = ["os-poll", "net"]}
 safer-ffi = "0.1.5"
 # llvm-sys = "140.0.5"
 
