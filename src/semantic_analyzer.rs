@@ -24,7 +24,12 @@ impl SemanticAnalyzer {
             Node::Module(module) => {
                 populate_class_index(&result.index.class_index, &mut attribute_index);
                 populate_method_index(module, &mut method_index);
-                run_type_inference(module, method_index, attribute_index, &result.index.struct_index);
+                run_type_inference(
+                    module,
+                    method_index,
+                    attribute_index,
+                    &result.index.struct_index,
+                );
             }
             _ => todo!(),
         }
@@ -133,9 +138,11 @@ fn run_type_inference(
                             Node::Array(array) => {
                                 array.items.iter_mut().for_each(|node| {
                                     match node {
-                                        Node::Access(access_node) => {
-                                            visit_access_node(&attribute_index, &lvar_index, access_node)
-                                        }
+                                        Node::Access(access_node) => visit_access_node(
+                                            &attribute_index,
+                                            &lvar_index,
+                                            access_node,
+                                        ),
                                         Node::Binary(node) => visit_binary_node(
                                             &attribute_index,
                                             &method_index,
@@ -159,11 +166,18 @@ fn run_type_inference(
                                     };
                                 });
 
-                                Some(BaseType::Array(array.length, Box::new(array.item_type.clone())))
-                            },
-                            Node::BuildStruct(struct_node) => {
-                                visit_build_struct_node(&attribute_index, &method_index, &lvar_index, struct_node, struct_index)
-                            },
+                                Some(BaseType::Array(
+                                    array.length,
+                                    Box::new(array.item_type.clone()),
+                                ))
+                            }
+                            Node::BuildStruct(struct_node) => visit_build_struct_node(
+                                &attribute_index,
+                                &method_index,
+                                &lvar_index,
+                                struct_node,
+                                struct_index,
+                            ),
                             Node::Struct(_) => todo!(),
                             Node::FnRef(_) => todo!(),
                         };
@@ -197,7 +211,7 @@ fn run_type_inference(
                     Node::StringLiteral(_) => todo!(),
                     Node::LocalVar(node) => {
                         match node.return_type {
-                            Some(_) => {},
+                            Some(_) => {}
                             None => todo!(),
                         }
                         // println!("{:#?}", node);
@@ -238,11 +252,9 @@ fn run_type_inference(
                             Node::DefE(_) => todo!(),
                             Node::Impl(_) => todo!(),
                             Node::Int(_) => todo!(),
-                            Node::LocalVar(lvar) => {
-                                match lvar.return_type {
-                                    Some(_) => lvar.return_type.clone(),
-                                    None => todo!(),
-                                }
+                            Node::LocalVar(lvar) => match lvar.return_type {
+                                Some(_) => lvar.return_type.clone(),
+                                None => todo!(),
                             },
                             Node::Loop(_) => todo!(),
                             Node::Module(_) => todo!(),
@@ -254,9 +266,11 @@ fn run_type_inference(
                             Node::Array(array) => {
                                 array.items.iter_mut().for_each(|node| {
                                     match node {
-                                        Node::Access(access_node) => {
-                                            visit_access_node(&attribute_index, &lvar_index, access_node)
-                                        }
+                                        Node::Access(access_node) => visit_access_node(
+                                            &attribute_index,
+                                            &lvar_index,
+                                            access_node,
+                                        ),
                                         Node::Binary(node) => visit_binary_node(
                                             &attribute_index,
                                             &method_index,
@@ -279,8 +293,11 @@ fn run_type_inference(
                                     };
                                 });
 
-                                Some(BaseType::Array(array.length, Box::new(array.item_type.clone())))
-                            },
+                                Some(BaseType::Array(
+                                    array.length,
+                                    Box::new(array.item_type.clone()),
+                                ))
+                            }
                             Node::BuildStruct(_) => todo!(),
                             Node::Struct(_) => todo!(),
                             Node::FnRef(_) => todo!(),
@@ -322,11 +339,9 @@ fn run_type_inference(
                             Node::DefE(_) => todo!(),
                             Node::Impl(_) => todo!(),
                             Node::Int(_) => todo!(),
-                            Node::LocalVar(lvar) => {
-                                match lvar.return_type {
-                                    Some(_) => lvar.return_type.clone(),
-                                    None => todo!(),
-                                }
+                            Node::LocalVar(lvar) => match lvar.return_type {
+                                Some(_) => lvar.return_type.clone(),
+                                None => todo!(),
                             },
                             Node::Loop(_) => todo!(),
                             Node::Module(_) => todo!(),
@@ -338,9 +353,11 @@ fn run_type_inference(
                             Node::Array(array) => {
                                 array.items.iter_mut().for_each(|node| {
                                     match node {
-                                        Node::Access(access_node) => {
-                                            visit_access_node(&attribute_index, &lvar_index, access_node)
-                                        }
+                                        Node::Access(access_node) => visit_access_node(
+                                            &attribute_index,
+                                            &lvar_index,
+                                            access_node,
+                                        ),
                                         Node::Binary(node) => visit_binary_node(
                                             &attribute_index,
                                             &method_index,
@@ -363,8 +380,11 @@ fn run_type_inference(
                                     };
                                 });
 
-                                Some(BaseType::Array(array.length, Box::new(array.item_type.clone())))
-                            },
+                                Some(BaseType::Array(
+                                    array.length,
+                                    Box::new(array.item_type.clone()),
+                                ))
+                            }
                             Node::BuildStruct(_) => todo!(),
                             Node::Struct(_) => todo!(),
                             Node::FnRef(_) => todo!(),
@@ -425,7 +445,7 @@ fn run_type_inference(
                                 _ => todo!(),
                             };
                         });
-                    },
+                    }
                     Node::BuildStruct(_) => todo!(),
                     Node::Struct(_) => todo!(),
                     Node::FnRef(_) => todo!(),
@@ -459,7 +479,7 @@ fn visit_access_node(
     let class_name = match access_node.receiver.as_mut() {
         Node::LocalVar(lvar) => {
             match lvar.return_type {
-                Some(_) => {},
+                Some(_) => {}
                 None => todo!(),
             }
 
@@ -562,7 +582,7 @@ fn visit_call_node(
             }
             Node::LocalVar(lvar) => {
                 match lvar.return_type {
-                    Some(_) => {},
+                    Some(_) => {}
                     None => todo!(),
                 }
 
@@ -570,14 +590,15 @@ fn visit_call_node(
                 lvar.return_type = latest_return_type.clone();
             }
             Node::StringLiteral(_) => {}
-            Node::Const(_) => {},
-            Node::Int(_) => {},
+            Node::Const(_) => {}
+            Node::Int(_) => {}
             Node::SelfRef(self_ref) => {
                 // Node::SelfRef(self_ref) => pajama_class_name(&self_ref.return_type),
             }
             _ => {
                 println!("{:#?}", arg);
-                todo!()},
+                todo!()
+            }
         };
     }
 
@@ -602,7 +623,7 @@ fn visit_send_node(
         Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
         Node::LocalVar(lvar) => {
             match lvar.return_type {
-                Some(_) => {},
+                Some(_) => {}
                 None => {
                     // maybe a function ref!
                     if method_index.contains_key(&lvar.name) {
@@ -613,7 +634,7 @@ fn visit_send_node(
                         // not found, return an error
                         todo!()
                     }
-                },
+                }
             }
 
             let latest_return_type = lvar_index.get(&lvar.name).unwrap();
@@ -668,44 +689,33 @@ fn visit_build_struct_node(
                 visit_access_node(&attribute_index, &lvar_index, access_node);
             }
             Node::Binary(node) => {
-                visit_binary_node(
-                            &attribute_index,
-                            &method_index,
-                            &lvar_index,
-                            node,
-                        );
-            },
+                visit_binary_node(&attribute_index, &method_index, &lvar_index, node);
+            }
             Node::Call(node) => {
-                visit_call_node(
-                            &attribute_index,
-                            &method_index,
-                            &lvar_index,
-                            node,
-                        );
-            },
+                visit_call_node(&attribute_index, &method_index, &lvar_index, node);
+            }
             Node::Send(node) => {
-                visit_send_node(
-                            &attribute_index,
-                            &method_index,
-                            &lvar_index,
-                            node,
-                        );
-            },
+                visit_send_node(&attribute_index, &method_index, &lvar_index, node);
+            }
             Node::BuildStruct(node) => {
                 visit_build_struct_node(
-                            &attribute_index,
-                            &method_index,
-                            &lvar_index,
-                            node,
-                            struct_index,
-                        );
-            },
-            Node::Const(_) => {},
+                    &attribute_index,
+                    &method_index,
+                    &lvar_index,
+                    node,
+                    struct_index,
+                );
+            }
+            Node::Const(_) => {}
             _ => todo!(),
         };
     });
 
-    let return_type = struct_index.get(&build_struct_node.name).unwrap().return_type.clone();
+    let return_type = struct_index
+        .get(&build_struct_node.name)
+        .unwrap()
+        .return_type
+        .clone();
     Some(return_type)
 }
 

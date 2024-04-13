@@ -37,7 +37,6 @@ pub fn print_int(int: i64) {
 #[used]
 static EXTERNAL_FNS3: [fn(i64); 1] = [print_int];
 
-
 // #[no_mangle]
 // pub fn base_print(pj_str: PjStr) {
 //     print_bytes(pj_str.buffer as *const u8, pj_str.length);
@@ -45,9 +44,6 @@ static EXTERNAL_FNS3: [fn(i64); 1] = [print_int];
 
 // #[used]
 // static EXTERNAL_FNS15: [fn(PjStr); 1] = [base_print];
-
-
-
 
 use libc::{c_void, malloc};
 // You can run this example from the root of the mio repo:
@@ -68,16 +64,16 @@ const SERVER: Token = Token(0);
 // const DATA: &[u8] = b"Hello world!\n";
 
 #[used]
-static EXTERNAL_FNS6: [extern fn(&PjStr) -> *mut c_void; 1] = [pj_malloc_struct];
+static EXTERNAL_FNS6: [extern "C" fn(&PjStr) -> *mut c_void; 1] = [pj_malloc_struct];
 
 fn pjstr_to_str(pj_str: &PjStr) -> &str {
-  unsafe {
-      // Create a slice from the raw buffer and length
-      let slice = core::slice::from_raw_parts(pj_str.buffer as *const u8, pj_str.length as usize);
+    unsafe {
+        // Create a slice from the raw buffer and length
+        let slice = core::slice::from_raw_parts(pj_str.buffer as *const u8, pj_str.length as usize);
 
-      // Convert the slice to a UTF-8 str
-      std::str::from_utf8(slice).unwrap()
-  }
+        // Convert the slice to a UTF-8 str
+        std::str::from_utf8(slice).unwrap()
+    }
 }
 
 #[no_mangle]
@@ -113,22 +109,35 @@ pub extern "C" fn pj_malloc_struct(pj_name: &PjStr) -> *mut c_void {
             unsafe { std::ptr::write(ptr as *mut HashMap<Token, TcpStream>, HashMap::new()) };
             ptr
         }
-        _name => panic!("pj_malloc_struct given unknown struct type: {}", _name)
+        _name => panic!("pj_malloc_struct given unknown struct type: {}", _name),
     }
 }
 
 #[used]
-static EXTERNAL_FNS9: [extern fn(&mut PjTcpServer); 1] = [pj_listen];
+static EXTERNAL_FNS9: [extern "C" fn(&mut PjTcpServer); 1] = [pj_listen];
 
 #[no_mangle]
-pub extern fn pj_listen(pj_tcp_server: &mut PjTcpServer) {
-    let addr = unsafe { format!("{}:{}", pjstr_to_str(pj_tcp_server.host.as_ref().unwrap()), pjstr_to_str(pj_tcp_server.port.as_ref().unwrap())) }
-        .parse().unwrap();
+pub extern "C" fn pj_listen(pj_tcp_server: &mut PjTcpServer) {
+    let addr = unsafe {
+        format!(
+            "{}:{}",
+            pjstr_to_str(pj_tcp_server.host.as_ref().unwrap()),
+            pjstr_to_str(pj_tcp_server.port.as_ref().unwrap())
+        )
+    }
+    .parse()
+    .unwrap();
     let mut server = TcpListener::bind(addr).unwrap();
 
     // Register the server with poll we can receive events for it.
-    unsafe { pj_tcp_server.poll.as_ref().unwrap() }.registry()
-        .register(&mut server, Token(pj_tcp_server.conn_id as usize), Interest::READABLE).unwrap();
+    unsafe { pj_tcp_server.poll.as_ref().unwrap() }
+        .registry()
+        .register(
+            &mut server,
+            Token(pj_tcp_server.conn_id as usize),
+            Interest::READABLE,
+        )
+        .unwrap();
 
     pj_tcp_server.conn_id = pj_tcp_server.conn_id + 1;
 
@@ -142,10 +151,10 @@ pub extern fn pj_listen(pj_tcp_server: &mut PjTcpServer) {
 }
 
 #[used]
-static EXTERNAL_FNS10: [extern fn(&mut PjTcpServer); 1] = [pj_poll];
+static EXTERNAL_FNS10: [extern "C" fn(&mut PjTcpServer); 1] = [pj_poll];
 
 #[no_mangle]
-pub extern fn pj_poll(pj_tcp_server: &mut PjTcpServer) {
+pub extern "C" fn pj_poll(pj_tcp_server: &mut PjTcpServer) {
     let events = unsafe { pj_tcp_server.events.as_mut().unwrap() };
     let poll = unsafe { pj_tcp_server.poll.as_mut().unwrap() };
 
@@ -159,20 +168,19 @@ pub extern fn pj_poll(pj_tcp_server: &mut PjTcpServer) {
     }
 }
 
-
 #[used]
-static EXTERNAL_FNS13: [extern fn(fn()); 1] = [pj_ref_test];
+static EXTERNAL_FNS13: [extern "C" fn(fn()); 1] = [pj_ref_test];
 
 #[no_mangle]
-pub extern fn pj_ref_test(tcp_writable: fn()) {
+pub extern "C" fn pj_ref_test(tcp_writable: fn()) {
     tcp_writable()
 }
 
 #[used]
-static EXTERNAL_FNS11: [extern fn(&mut PjTcpServer, &PjTcpEvents); 1] = [pj_check_events];
+static EXTERNAL_FNS11: [extern "C" fn(&mut PjTcpServer, &PjTcpEvents); 1] = [pj_check_events];
 
 #[no_mangle]
-pub extern fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events: &PjTcpEvents) {
+pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events: &PjTcpEvents) {
     let events = unsafe { pj_tcp_server.events.as_ref().unwrap() };
     let poll = unsafe { pj_tcp_server.poll.as_ref().unwrap() };
     let server = unsafe { pj_tcp_server.tcp_listener.as_ref().unwrap() };
@@ -205,25 +213,34 @@ pub extern fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events: &P
                 println!("Accepted connection from: {}", address);
 
                 let token = next(&mut Token(unique_token as usize));
-                poll.registry().register(
-                    &mut connection,
-                    token,
-                    Interest::READABLE.add(Interest::WRITABLE),
-                ).unwrap();
+                poll.registry()
+                    .register(
+                        &mut connection,
+                        token,
+                        Interest::READABLE.add(Interest::WRITABLE),
+                    )
+                    .unwrap();
 
                 connections.insert(token, connection);
 
                 let pj_tcp_connection = PjTcpConnection {
                     server: pj_tcp_server,
                     tcp_stream: connections.get_mut(&token).unwrap(),
-                    event
+                    event,
                 };
                 (pj_tcp_events.tcp_writable_fn)(&pj_tcp_connection);
             },
             token => {
                 // Maybe received an event for a TCP connection.
                 let done = if let Some(connection) = connections.get_mut(&token) {
-                    handle_connection_event(pj_tcp_server, pj_tcp_events, poll.registry(), connection, event).unwrap()
+                    handle_connection_event(
+                        pj_tcp_server,
+                        pj_tcp_events,
+                        poll.registry(),
+                        connection,
+                        event,
+                    )
+                    .unwrap()
                 } else {
                     // Sporadic events happen, we can safely ignore them.
                     false
@@ -255,7 +272,7 @@ fn handle_connection_event(
     let pj_tcp_connection = PjTcpConnection {
         server: pj_tcp_server,
         tcp_stream: connection,
-        event
+        event,
     };
 
     if event.is_writable() {
@@ -316,14 +333,22 @@ fn handle_connection_event(
     Ok(false)
 }
 
-
 #[used]
-static EXTERNAL_FNS12: [extern fn(&mut PjTcpConnection, &PjStr); 1] = [pj_tcp_connection_write];
+static EXTERNAL_FNS12: [extern "C" fn(&mut PjTcpConnection, &PjStr); 1] = [pj_tcp_connection_write];
 
 #[no_mangle]
-pub extern fn pj_tcp_connection_write(pj_tcp_connection: &mut PjTcpConnection, pj_str: &PjStr) {
+pub extern "C" fn pj_tcp_connection_write(pj_tcp_connection: &mut PjTcpConnection, pj_str: &PjStr) {
     let connection = unsafe { pj_tcp_connection.tcp_stream.as_mut().unwrap() };
-    let registry = unsafe { pj_tcp_connection.server.as_ref().unwrap().poll.as_ref().unwrap() }.registry();
+    let registry = unsafe {
+        pj_tcp_connection
+            .server
+            .as_ref()
+            .unwrap()
+            .poll
+            .as_ref()
+            .unwrap()
+    }
+    .registry();
     let event = unsafe { pj_tcp_connection.event.as_ref().unwrap() };
 
     let slice = unsafe {
@@ -340,11 +365,13 @@ pub extern fn pj_tcp_connection_write(pj_tcp_connection: &mut PjTcpConnection, p
             // return Err(io::ErrorKind::WriteZero.into())
             println!("{:#?}", io::ErrorKind::WriteZero);
             return;
-        },
+        }
         Ok(_) => {
             // After we've written something we'll reregister the connection
             // to only respond to readable events.
-            registry.reregister(connection, event.token(), Interest::READABLE).unwrap()
+            registry
+                .reregister(connection, event.token(), Interest::READABLE)
+                .unwrap()
         }
         // Would block "errors" are the OS's way of saying that the
         // connection is not actually ready to perform this I/O operation.
@@ -358,7 +385,7 @@ pub extern fn pj_tcp_connection_write(pj_tcp_connection: &mut PjTcpConnection, p
         Err(err) => {
             println!("{:#?}", err);
             return;
-        },
+        }
     }
 }
 

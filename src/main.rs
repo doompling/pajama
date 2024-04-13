@@ -1,9 +1,9 @@
-mod pajama_compiler;
+mod codegen;
 mod lexer;
+mod pajama_compiler;
+mod pajama_lib;
 mod parser;
 mod semantic_analyzer;
-mod codegen;
-mod pajama_lib;
 
 use pajama_compiler::PajamaCompiler;
 

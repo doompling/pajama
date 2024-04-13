@@ -1,4 +1,4 @@
-use crate::parser::{BaseType, Def, Node, ParserResult, FnRef};
+use crate::parser::{BaseType, Def, FnRef, Node, ParserResult};
 use crate::{mi_malloc, parser};
 use melior::dialect::llvm::attributes::{linkage, Linkage};
 use melior::dialect::llvm::AllocaOptions;
@@ -28,8 +28,6 @@ use std::borrow::BorrowMut;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 
-
-
 #[no_mangle]
 #[derive(Debug)]
 #[repr(C)]
@@ -41,19 +39,17 @@ struct InAddr {
 #[derive(Debug)]
 #[repr(C)]
 struct SockaddrIn {
-   sin_len:    i8,       // length of structure (16)
-   sin_family: i8,       // AF_INET
-   sin_port:   i16,      // 16-bit TCP or UDP port number (network byte ordered)
-   sin_addr:   InAddr,     // 32-bit IPv4 address (network byte ordered)
-   sin_zero:   [i8; 8], // unused
+    sin_len: i8,       // length of structure (16)
+    sin_family: i8,    // AF_INET
+    sin_port: i16,     // 16-bit TCP or UDP port number (network byte ordered)
+    sin_addr: InAddr,  // 32-bit IPv4 address (network byte ordered)
+    sin_zero: [i8; 8], // unused
 }
-
 
 #[no_mangle]
 pub fn print_class(class: SockaddrIn) {
-    unsafe{ println!("print_class: {:#?}", class) };
+    unsafe { println!("print_class: {:#?}", class) };
 }
-
 
 #[no_mangle]
 pub fn print_bytes(bytes: *const u8, len: i64) {
@@ -563,7 +559,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         for arg in node.prototype.args.iter() {
             inputs.push((
                 self.basetype_to_mlir_type(&arg.return_type),
-                Location::unknown(&self.context)
+                Location::unknown(&self.context),
             ));
 
             // match &arg.return_type {
@@ -593,12 +589,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         };
 
         if node.body.iter().len() == 0 && !node.main_fn {
-            block.append_operation(
-                llvm::r#return(
-                    None,
-                    Location::unknown(&self.context)
-                )
-            );
+            block.append_operation(llvm::r#return(None, Location::unknown(&self.context)));
 
             let region = Region::new();
             region.append_block(block);
@@ -608,18 +599,15 @@ impl<'c, 'm> Compiler<'c, 'm> {
             // panic!("Empty body not supported")
         } else if node.body.iter().len() == 0 && node.main_fn {
             let success_int_value = block
-            .append_operation(arith::constant(
-                &self.context,
-                IntegerAttribute::new(
-                    IntegerType::new(&self.context, 32).into(),
-                    1 as i64,
-                )
-                .into(),
-                Location::unknown(&self.context),
-            ))
-            .result(0)
-            .unwrap()
-            .into();
+                .append_operation(arith::constant(
+                    &self.context,
+                    IntegerAttribute::new(IntegerType::new(&self.context, 32).into(), 1 as i64)
+                        .into(),
+                    Location::unknown(&self.context),
+                ))
+                .result(0)
+                .unwrap()
+                .into();
 
             block.append_operation(llvm::r#return(
                 Some(success_int_value),
@@ -772,7 +760,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 match &lvar.return_type {
                     Some(rt) => {
                         // Load the attribute access
-                        let result_type = self.basetype_to_mlir_type(&access.return_type.clone().unwrap());
+                        let result_type =
+                            self.basetype_to_mlir_type(&access.return_type.clone().unwrap());
 
                         let gep = block.append_operation(llvm::get_element_ptr(
                             &self.context,
@@ -792,7 +781,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
                         load_op
 
-                    // Some(rt) => match rt {
+                        // Some(rt) => match rt {
                         // BaseType::BytePtr => {
                         //     self.llvm_types.i8_ptr_type
                         // },
@@ -847,7 +836,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                         // BaseType::Int32 => todo!(),
                         // BaseType::Int64 => todo!(),
                         // BaseType::Array(_, _) => todo!(),
-                    },
+                    }
                     None => todo!(),
                 }
             }
@@ -939,8 +928,6 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-
-
         let call_node = match send_node.message.as_ref() {
             Node::Call(call_node) => call_node,
             _ => return Err("Expected send_node message to be a Call"),
@@ -959,14 +946,14 @@ impl<'c, 'm> Compiler<'c, 'm> {
                         None => {
                             if call_node.fn_name == "fn_ref" {
                                 let fn_ref = FnRef {
-                                    fn_name: local_var.name.clone()
+                                    fn_name: local_var.name.clone(),
                                 };
 
                                 return self.compile_fn_ref(block, &fn_ref, ctx, mctx);
                             } else {
                                 todo!()
                             }
-                        },
+                        }
                     };
                     // let value = self.compile_local_var(block, local_var, ctx, mctx);
                     Ok(Some(value))
@@ -1004,7 +991,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
         println!("{:#?}", self.parser_result.index.fn_prototype_index);
 
-        let prototype = self.parser_result.index.fn_prototype_index.get(&call_node.fn_name).unwrap();
+        let prototype = self
+            .parser_result
+            .index
+            .fn_prototype_index
+            .get(&call_node.fn_name)
+            .unwrap();
 
         for arg in &prototype.args {
             // use the prototype to find the value. 0 is causing i64 instead of the needed i32
@@ -1059,8 +1051,6 @@ impl<'c, 'm> Compiler<'c, 'm> {
         //     llvm::r#type::function(result.clone(), &inputs, false);
 
         let function_type = FunctionType::new(&self.context, &inputs, &results);
-
-
 
         // let function = block.append_operation(llvm::global(
         //     &self.context,
@@ -1163,23 +1153,27 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::Byte => todo!(),
                     BaseType::Int => {
                         value = block
-                            .append_operation(
-                                arith::extsi(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::extsi(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int16 => todo!(),
                     BaseType::Int32 => {
                         value = block
-                            .append_operation(
-                                arith::extsi(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::extsi(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int64 => todo!(),
                     BaseType::Array(_, _) => todo!(),
                     BaseType::Class(_) => todo!(),
@@ -1193,13 +1187,15 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::Int => todo!(),
                     BaseType::Int16 => {
                         value = block
-                            .append_operation(
-                                arith::trunci(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::trunci(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int32 => todo!(),
                     BaseType::Int64 => todo!(),
                     BaseType::Array(_, _) => todo!(),
@@ -1212,22 +1208,26 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 BaseType::Int16 => match prototype_arg_type {
                     BaseType::Byte => {
                         value = block
-                            .append_operation(
-                                arith::trunci(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::trunci(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int => {
                         value = block
-                            .append_operation(
-                                arith::extsi(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::extsi(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int16 => todo!(),
                     BaseType::Int32 => todo!(),
                     BaseType::Int64 => todo!(),
@@ -1241,41 +1241,49 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 BaseType::Int32 => match prototype_arg_type {
                     BaseType::Byte => {
                         value = block
-                            .append_operation(
-                                arith::trunci(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::trunci(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int => {
                         value = block
-                            .append_operation(
-                                arith::extsi(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::extsi(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int16 => {
                         value = block
-                            .append_operation(
-                                arith::trunci(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::trunci(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int32 => todo!(),
                     BaseType::Int64 => {
                         value = block
-                            .append_operation(
-                                arith::extsi(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::extsi(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Array(_, _) => todo!(),
                     BaseType::Class(_) => todo!(),
                     BaseType::BytePtr => todo!(),
@@ -1286,35 +1294,41 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 BaseType::Int64 => match prototype_arg_type {
                     BaseType::Byte => {
                         value = block
-                            .append_operation(
-                                arith::trunci(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::trunci(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
-                    BaseType::Int => {},
+                    }
+                    BaseType::Int => {}
                     BaseType::Int16 => {
                         value = block
-                            .append_operation(
-                                arith::trunci(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::trunci(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int32 => {
                         value = block
-                            .append_operation(
-                                arith::trunci(value, cast_type, Location::unknown(&self.context))
-                            )
+                            .append_operation(arith::trunci(
+                                value,
+                                cast_type,
+                                Location::unknown(&self.context),
+                            ))
                             .result(0)
                             .unwrap()
                             .into();
-                    },
+                    }
                     BaseType::Int64 => todo!(),
                     BaseType::Array(_, _) => todo!(),
-                    BaseType::Class(_) => {},
+                    BaseType::Class(_) => {}
                     BaseType::BytePtr => todo!(),
                     BaseType::Void => todo!(),
                     BaseType::Struct(_) => todo!(),
@@ -1334,7 +1348,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                         //     .result(0)
                         //     .unwrap()
                         //     .into();
-                    },
+                    }
                     BaseType::Class(_) => todo!(),
                     BaseType::Struct(_) => todo!(),
                     BaseType::BytePtr => todo!(),
@@ -1343,13 +1357,15 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 },
                 BaseType::Class(class_name) => {
                     value = block
-                        .append_operation(
-                            llvm::bitcast(value, cast_type, Location::unknown(&self.context))
-                        )
+                        .append_operation(llvm::bitcast(
+                            value,
+                            cast_type,
+                            Location::unknown(&self.context),
+                        ))
                         .result(0)
                         .unwrap()
                         .into();
-                },
+                }
                 BaseType::BytePtr => {
                     match prototype_arg_type {
                         BaseType::Byte => todo!(),
@@ -1362,20 +1378,22 @@ impl<'c, 'm> Compiler<'c, 'm> {
                         BaseType::Class(class_name) => {
                             // pj_alloc_struct returns a BytePtr, this casts it to a user defined class
                             value = block
-                                .append_operation(
-                                    llvm::bitcast(value, cast_type, Location::unknown(&self.context))
-                                )
+                                .append_operation(llvm::bitcast(
+                                    value,
+                                    cast_type,
+                                    Location::unknown(&self.context),
+                                ))
                                 .result(0)
                                 .unwrap()
                                 .into();
-                        },
+                        }
                         BaseType::Struct(_) => todo!(),
                         BaseType::BytePtr => todo!(),
                         BaseType::Void => todo!(),
                     }
-                },
+                }
                 BaseType::Void => todo!(),
-                BaseType::Struct(_) => {},
+                BaseType::Struct(_) => {}
                 BaseType::FnRef => {
                     // match prototype_arg_type {
                     //     BaseType::Byte => todo!(),
@@ -1398,7 +1416,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     //     },
                     //     BaseType::Void => todo!(),
                     // }
-                },
+                }
             }
         }
 
@@ -1428,7 +1446,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         // let func_type = FunctionType::new(&self.context, &[], &[]).into();
-        let prototype = self.parser_result.index.fn_prototype_index.get(&fn_ref.fn_name).unwrap();
+        let prototype = self
+            .parser_result
+            .index
+            .fn_prototype_index
+            .get(&fn_ref.fn_name)
+            .unwrap();
 
         let mut inputs = vec![];
 
@@ -1441,10 +1464,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         //     None => vec![self.llvm_types.void_type],
         // };
 
-
-
         // let function_type = FunctionType::new(&self.context, &inputs, &results);
-
 
         let results = match &prototype.return_type {
             Some(rt) => vec![self.basetype_to_mlir_type(rt)],
@@ -1456,7 +1476,6 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let function_type =
             // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
             llvm::r#type::function(result.clone(), &inputs, false);
-
 
         // let result = results.first().unwrap_or(&self.llvm_types.void_type);
         // // let result = self.basetype_to_mlir_type(prototype.return_type)
@@ -1477,10 +1496,11 @@ impl<'c, 'm> Compiler<'c, 'm> {
             .into();
 
         let value = block
-            .append_operation(
-                llvm::bitcast(
-                    addressof_op, self.llvm_types.ptr_type, Location::unknown(&self.context))
-            )
+            .append_operation(llvm::bitcast(
+                addressof_op,
+                self.llvm_types.ptr_type,
+                Location::unknown(&self.context),
+            ))
             .result(0)
             .unwrap()
             .into();
@@ -1531,7 +1551,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-        let prototype = self.parser_result.index.fn_prototype_index.get(&call.fn_name).unwrap();
+        let prototype = self
+            .parser_result
+            .index
+            .fn_prototype_index
+            .get(&call.fn_name)
+            .unwrap();
         // let function_type = self.prototype_to_func_type(prototype);
 
         let mut inputs = vec![];
@@ -1541,12 +1566,10 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
         println!("{:#?}", &call.fn_name);
 
-
         for arg in &prototype.args {
             // use the prototype to find the value. 0 is causing i64 instead of the needed i32
 
             inputs.push(self.basetype_to_mlir_type(&arg.return_type));
-
 
             // let arg_return_type = match &arg {
             //     Node::Access(access_node) => {
@@ -1591,8 +1614,6 @@ impl<'c, 'm> Compiler<'c, 'm> {
         // let function_type = FunctionType::new(&self.context, &inputs, &result);
 
         // let location = Location::unknown(&self.context);
-
-
 
         // let function = block.append_operation(func::constant(
         //     &self.context,
@@ -1730,13 +1751,13 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Ok(Some(value))
         } else {
             block.append_operation(llvm::call(
-                    &self.context,
-                    FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str()),
-                    &compiled_args,
-                    // &function_type.result(0).into_iter().collect::<Vec<_>>(),
-                    &results,
-                    Location::unknown(&self.context),
-                ));
+                &self.context,
+                FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str()),
+                &compiled_args,
+                // &function_type.result(0).into_iter().collect::<Vec<_>>(),
+                &results,
+                Location::unknown(&self.context),
+            ));
 
             Ok(None)
         }
@@ -1925,9 +1946,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let lvar_type = match &lvar.return_type {
             Some(base_type) => match base_type {
                 BaseType::Class(_) => return Ok(Some(lvar_value)),
-                _base_type => {
-                    self.basetype_to_mlir_type(_base_type)
-                }
+                _base_type => self.basetype_to_mlir_type(_base_type),
             },
             None => todo!(),
         };
@@ -1950,9 +1969,14 @@ impl<'c, 'm> Compiler<'c, 'm> {
     fn compile_const_ref<'a>(
         &self,
         block: &'a Block<'c>,
-        const_node: &parser::Const
+        const_node: &parser::Const,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-        let const_type = self.parser_result.index.constant_index.get(&const_node.name).unwrap();
+        let const_type = self
+            .parser_result
+            .index
+            .constant_index
+            .get(&const_node.name)
+            .unwrap();
         let mlir_type = self.basetype_to_mlir_type(const_type);
 
         let addressof_op = block
@@ -1999,9 +2023,10 @@ impl<'c, 'm> Compiler<'c, 'm> {
             .into();
 
         let array_item_type = self.basetype_to_mlir_type(&array_node.item_type);
-        let array_type = self.basetype_to_mlir_type(
-            &BaseType::Array(array_node.length, Box::new(array_node.item_type.clone()))
-        );
+        let array_type = self.basetype_to_mlir_type(&BaseType::Array(
+            array_node.length,
+            Box::new(array_node.item_type.clone()),
+        ));
         let ptr_type = r#type::pointer(array_type, 0);
 
         let array_alloca = block
@@ -2033,10 +2058,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 .unwrap()
                 .into();
 
-            return_val = Some(self.compile_type_cast(block,
+            return_val = Some(self.compile_type_cast(
+                block,
                 return_val.unwrap(),
                 self.node_base_type(arg).unwrap(),
-                array_node.item_type.clone()));
+                array_node.item_type.clone(),
+            ));
 
             block.append_operation(llvm::store(
                 &self.context,
@@ -2045,7 +2072,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 Location::unknown(&self.context),
                 Default::default(),
             ));
-        };
+        }
 
         // let result = block
         //     .append_operation(llvm::load(
@@ -2080,7 +2107,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
             .unwrap()
             .into();
 
-        let struct_node = self.parser_result.index.struct_index.get(&build_struct_node.name).unwrap();
+        let struct_node = self
+            .parser_result
+            .index
+            .struct_index
+            .get(&build_struct_node.name)
+            .unwrap();
         let struct_type = self.basetype_to_mlir_type(&struct_node.return_type);
         let ptr_type = r#type::pointer(struct_type, 0);
 
@@ -2115,10 +2147,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 .unwrap()
                 .into();
 
-            return_val = Some(self.compile_type_cast(block,
+            return_val = Some(self.compile_type_cast(
+                block,
                 return_val.unwrap(),
                 self.node_base_type(arg).unwrap(),
-                struct_attr_type.clone()));
+                struct_attr_type.clone(),
+            ));
 
             block.append_operation(llvm::store(
                 &self.context,
@@ -2127,7 +2161,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 Location::unknown(&self.context),
                 Default::default(),
             ));
-        };
+        }
 
         // let result = block
         //     .append_operation(llvm::load(
@@ -2547,7 +2581,6 @@ impl<'c, 'm> Compiler<'c, 'm> {
         //     Node::AssignConstant(_) => todo!(),
         // };
 
-
         println!("asgn_lvar");
         println!("{:#?}", asgn_lvar);
 
@@ -2567,18 +2600,18 @@ impl<'c, 'm> Compiler<'c, 'm> {
                             return Ok(return_val);
                         }
                     }
-                    BaseType::Byte => {},
-                    BaseType::Int16 => {},
-                    BaseType::Int32 => {},
-                    BaseType::Int64 => {},
-                    BaseType::Array(_, _) => {},
+                    BaseType::Byte => {}
+                    BaseType::Int16 => {}
+                    BaseType::Int32 => {}
+                    BaseType::Int64 => {}
+                    BaseType::Array(_, _) => {}
                     BaseType::Struct(_) => {
                         ctx.lvars
                             .insert(asgn_lvar.name.clone(), return_val.unwrap());
                         // ctx.lvar_stores.insert(asgn_lvar.name.clone(), return_val.unwrap());
                         return Ok(return_val);
-                    },
-                    BaseType::FnRef => {},
+                    }
+                    BaseType::FnRef => {}
                 }
             }
             None => todo!(),
@@ -2674,11 +2707,19 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::Send(send_node) => send_node.return_type.clone(),
             Node::StringLiteral(_) => Some(BaseType::Class("Str".to_string())),
             Node::Access(node) => node.return_type.clone(),
-            Node::Array(array) => Some(BaseType::Array(array.length, Box::new(array.item_type.clone()))),
+            Node::Array(array) => Some(BaseType::Array(
+                array.length,
+                Box::new(array.item_type.clone()),
+            )),
             Node::BuildStruct(struct_node) => {
-                let entry = self.parser_result.index.struct_index.get(&struct_node.name).unwrap();
+                let entry = self
+                    .parser_result
+                    .index
+                    .struct_index
+                    .get(&struct_node.name)
+                    .unwrap();
                 Some(entry.return_type.clone())
-            },
+            }
             Node::Struct(_) => todo!(),
             Node::AssignAttribute(_) => todo!(),
             Node::AssignAttributeAccess(_) => todo!(),
@@ -2688,9 +2729,13 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::Call(call_node) => call_node.return_type.clone(),
             Node::Class(_) => todo!(),
             Node::Const(const_node) => {
-                let entry = self.parser_result.index.constant_index.get(&const_node.name);
+                let entry = self
+                    .parser_result
+                    .index
+                    .constant_index
+                    .get(&const_node.name);
                 Some(entry.unwrap().clone())
-            },
+            }
             Node::Def(_) => todo!(),
             Node::DefE(_) => todo!(),
             Node::Impl(_) => todo!(),
@@ -2715,9 +2760,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 println!("{:#?}", name);
                 match self.class_type_index.get(name) {
                     Some(struct_type) => llvm::r#type::r#pointer(*struct_type, 0),
-                    None => {
-                        self.struct_type_index.get(name).unwrap().clone()
-                    },
+                    None => self.struct_type_index.get(name).unwrap().clone(),
                 }
             }
             BaseType::BytePtr => self.llvm_types.i8_ptr_type.into(),
@@ -2725,11 +2768,13 @@ impl<'c, 'm> Compiler<'c, 'm> {
             BaseType::Int16 => self.llvm_types.i16_type.into(),
             BaseType::Int32 => self.llvm_types.i32_type.into(),
             BaseType::Int64 => self.llvm_types.i64_type.into(),
-            BaseType::Array(length, base_type) => llvm::r#type::array(self.basetype_to_mlir_type(base_type), *length as u32),
+            BaseType::Array(length, base_type) => {
+                llvm::r#type::array(self.basetype_to_mlir_type(base_type), *length as u32)
+            }
             BaseType::Void => todo!(),
             BaseType::Struct(struct_name) => {
                 self.struct_type_index.get(struct_name).unwrap().clone()
-            },
+            }
             BaseType::FnRef => self.llvm_types.ptr_type.into(),
             // BaseType::FnRef => {self.llvm_types.fn_ptr.into()},
             // BaseType::Struct(base_types) => todo!(),
@@ -2743,7 +2788,9 @@ fn basetype_to_mlir_type<'c>(llvm_types: LlvmTypes<'c>, return_type: &BaseType) 
         // self.basetype_to_mlir_type
         BaseType::Class(_) => llvm_types.ptr_type,
 
-        BaseType::Array(length, base_type) => llvm::r#type::array(basetype_to_mlir_type(llvm_types, base_type), *length as u32),
+        BaseType::Array(length, base_type) => {
+            llvm::r#type::array(basetype_to_mlir_type(llvm_types, base_type), *length as u32)
+        }
         BaseType::Byte => llvm_types.i8_type.into(),
         BaseType::BytePtr => llvm_types.i8_ptr_type.clone().into(),
         BaseType::Int => llvm_types.i64_type.into(),
@@ -2753,7 +2800,7 @@ fn basetype_to_mlir_type<'c>(llvm_types: LlvmTypes<'c>, return_type: &BaseType) 
         BaseType::Void => todo!(),
         BaseType::Struct(_) => todo!(),
         // BaseType::FnRef => { llvm_types.fn_ptr },
-        BaseType::FnRef => { llvm_types.ptr_type },
+        BaseType::FnRef => llvm_types.ptr_type,
     }
 }
 

@@ -6,8 +6,8 @@ use melior::pass::{conversion, PassManager};
 use melior::utility::{register_all_dialects, register_all_llvm_translations};
 use melior::{pass, Context, ExecutionEngine};
 
-use crate::lexer::Lexer;
 use crate::codegen::Compiler;
+use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::semantic_analyzer::SemanticAnalyzer;
 
@@ -20,10 +20,8 @@ impl PajamaCompiler {
 
         println!("{:#?}", tokens);
 
-
         let mut precedence_map = PajamaCompiler::build_op_precedence_map();
         let mut parser_result = Parser::start_parse(tokens, &mut precedence_map);
-
 
         SemanticAnalyzer::run(&mut parser_result);
 

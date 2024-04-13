@@ -1,7 +1,8 @@
 use std::{
     collections::HashMap,
+    fs::OpenOptions,
     hash::Hash,
-    ops::{Deref, DerefMut}, fs::OpenOptions,
+    ops::{Deref, DerefMut},
 };
 
 use melior::ir::attribute;
@@ -408,19 +409,21 @@ impl<'a> Parser<'a> {
     //     }
     // }
 
-    fn parse_constant_assignment_expr(&mut self, mctx: &mut ParserModuleCtx) -> Result<Vec<Node>, &'static str> {
+    fn parse_constant_assignment_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+    ) -> Result<Vec<Node>, &'static str> {
         println!("{:#?}", self.curr());
 
-        let name =
-            match self.current()? {
-                Token::Const(pos, name) => {
-                    self.advance()?;
-                    self.advance_optional_whitespace();
+        let name = match self.current()? {
+            Token::Const(pos, name) => {
+                self.advance()?;
+                self.advance_optional_whitespace();
 
-                    name
-                }
-                _ => return Err("Expected const node")
-            };
+                name
+            }
+            _ => return Err("Expected const node"),
+        };
 
         println!("name {:#?}", name);
         println!("{:#?}", self.curr());
@@ -432,7 +435,7 @@ impl<'a> Parser<'a> {
 
                 self.class_base_type(type_name)
             }
-            _ => return Err("Expected type for constant")
+            _ => return Err("Expected type for constant"),
         };
 
         println!("{:#?}", self.curr());
@@ -441,19 +444,28 @@ impl<'a> Parser<'a> {
             Token::Assign => {
                 self.advance();
                 self.advance_optional_whitespace();
-            },
+            }
             _ => return Err("Expected constant assignment"),
         };
 
         let value = Box::new(self.parse_constant_value_expr(mctx).unwrap());
 
-        self.index.constant_index.insert(name.clone(), return_type.clone());
+        self.index
+            .constant_index
+            .insert(name.clone(), return_type.clone());
 
-        Ok(vec![Node::AssignConstant(AssignConstant { name, value, return_type })])
+        Ok(vec![Node::AssignConstant(AssignConstant {
+            name,
+            value,
+            return_type,
+        })])
         // Ok(vec![])
     }
 
-    fn parse_constant_value_expr(&mut self, mctx: &mut ParserModuleCtx) -> Result<Node, &'static str> {
+    fn parse_constant_value_expr(
+        &mut self,
+        mctx: &mut ParserModuleCtx,
+    ) -> Result<Node, &'static str> {
         self.parse_nb_expr()
 
         // match self.current()? {
@@ -560,7 +572,9 @@ impl<'a> Parser<'a> {
                 prec: 0,
             };
 
-            self.index.fn_prototype_index.insert(prototype.name.clone(), prototype.clone());
+            self.index
+                .fn_prototype_index
+                .insert(prototype.name.clone(), prototype.clone());
 
             let new_fn = Node::Def(Def {
                 main_fn: false,
@@ -572,8 +586,6 @@ impl<'a> Parser<'a> {
             });
 
             functions.push(new_fn);
-
-
 
             // Construct an alloca function
             let mut args = vec![Arg {
@@ -591,7 +603,9 @@ impl<'a> Parser<'a> {
                 prec: 0,
             };
 
-            self.index.fn_prototype_index.insert(prototype.name.clone(), prototype.clone());
+            self.index
+                .fn_prototype_index
+                .insert(prototype.name.clone(), prototype.clone());
 
             let new_fn = Node::Def(Def {
                 main_fn: false,
@@ -643,7 +657,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.advance_optional_whitespace();
             }
-            _ => return Err("Expected End to struct")
+            _ => return Err("Expected End to struct"),
         }
 
         // let attr_return_types = attributes.iter().map(|attr| attr.return_type.clone()).collect();
@@ -676,53 +690,50 @@ impl<'a> Parser<'a> {
                     self.advance();
                     self.advance_optional_whitespace();
 
-                    let return_type =
-                        match self.current()? {
-                            Token::Const(_type_pos, type_name) => {
-                                self.advance();
-                                self.class_base_type(type_name)
-                            }
-                            Token::LSquareBrace => {
-                                self.advance();
+                    let return_type = match self.current()? {
+                        Token::Const(_type_pos, type_name) => {
+                            self.advance();
+                            self.class_base_type(type_name)
+                        }
+                        Token::LSquareBrace => {
+                            self.advance();
 
-                                let length = match self.current()? {
-                                    Token::Number(_, n) => n,
-                                    _ => return Err("Expected length of array")
-                                };
+                            let length = match self.current()? {
+                                Token::Number(_, n) => n,
+                                _ => return Err("Expected length of array"),
+                            };
 
-                                self.advance();
-                                self.advance_optional_space();
+                            self.advance();
+                            self.advance_optional_space();
 
-                                match self.current()? {
-                                    Token::Ident(_, sym) => {
-                                        match sym.as_str() {
-                                            "x" => {
-                                                self.advance();
-                                                self.advance_optional_space();
-                                            },
-                                            _ => return Err("Expected an 'x' for such as [4 x Byte]"),
-                                        }
-                                    }
-                                    _ => return Err("Expected type for array 1")
-                                };
-
-                                let array_return_type = match self.current()? {
-                                    Token::Const(_type_pos, type_name) => {
+                            match self.current()? {
+                                Token::Ident(_, sym) => match sym.as_str() {
+                                    "x" => {
                                         self.advance();
-                                        self.class_base_type(type_name)
+                                        self.advance_optional_space();
                                     }
-                                    _ => return Err("Expected type for array 2")
-                                };
+                                    _ => return Err("Expected an 'x' for such as [4 x Byte]"),
+                                },
+                                _ => return Err("Expected type for array 1"),
+                            };
 
-                                match self.current()? {
-                                    Token::RSquareBrace => self.advance(),
-                                    _ => return Err("Expected ] to end array type")
-                                };
+                            let array_return_type = match self.current()? {
+                                Token::Const(_type_pos, type_name) => {
+                                    self.advance();
+                                    self.class_base_type(type_name)
+                                }
+                                _ => return Err("Expected type for array 2"),
+                            };
 
-                                BaseType::Array(length as i64, Box::new(array_return_type))
-                            }
-                            _ => return Err("Expected a type after the attribute name"),
-                        };
+                            match self.current()? {
+                                Token::RSquareBrace => self.advance(),
+                                _ => return Err("Expected ] to end array type"),
+                            };
+
+                            BaseType::Array(length as i64, Box::new(array_return_type))
+                        }
+                        _ => return Err("Expected a type after the attribute name"),
+                    };
 
                     attributes.push(Attribute {
                         name: attr_name,
@@ -916,7 +927,9 @@ impl<'a> Parser<'a> {
 
         // let namespaced_fn_name = format!("{}.{}", mctx.class_name.clone(), def_node.prototype.name.clone());
         // self.index.fn_prototype_index.insert(namespaced_fn_name, def_node.prototype.clone());
-        self.index.fn_prototype_index.insert(def_node.prototype.name.clone(), def_node.prototype.clone());
+        self.index
+            .fn_prototype_index
+            .insert(def_node.prototype.name.clone(), def_node.prototype.clone());
 
         Ok(vec![Node::Def(def_node)])
 
@@ -970,7 +983,10 @@ impl<'a> Parser<'a> {
 
         // let namespaced_fn_name = format!(".{}", def_e_node.prototype.name.clone());
         // self.index.fn_prototype_index.insert(namespaced_fn_name, def_e_node.prototype.clone());
-        self.index.fn_prototype_index.insert(def_e_node.prototype.name.clone(), def_e_node.prototype.clone());
+        self.index.fn_prototype_index.insert(
+            def_e_node.prototype.name.clone(),
+            def_e_node.prototype.clone(),
+        );
 
         Ok(vec![Node::DefE(def_e_node)])
     }
@@ -1017,7 +1033,7 @@ impl<'a> Parser<'a> {
                     return_type,
                     is_op: is_operator,
                     prec: precedence,
-                })
+                });
             }
             Token::LParen => {
                 self.advance();
@@ -1069,15 +1085,13 @@ impl<'a> Parser<'a> {
             self.advance_optional_space();
 
             let return_type = match self.curr() {
-                Token::Const(pos, type_name) => {
-                    self.class_base_type(type_name)
-                },
+                Token::Const(pos, type_name) => self.class_base_type(type_name),
                 Token::LSquareBrace => {
                     self.advance();
 
                     let length = match self.current()? {
                         Token::Number(_, n) => n,
-                        _ => return Err("Expected length of array")
+                        _ => return Err("Expected length of array"),
                     };
 
                     self.advance_optional_space();
@@ -1090,11 +1104,11 @@ impl<'a> Parser<'a> {
                                 "x" => {
                                     self.advance();
                                     self.advance_optional_space();
-                                },
+                                }
                                 _ => return Err("Expected an 'x' for such as [4 x Byte]"),
                             }
                         }
-                        _ => return Err("Expected type for array 3")
+                        _ => return Err("Expected type for array 3"),
                     };
 
                     let array_return_type = match self.current()? {
@@ -1102,12 +1116,12 @@ impl<'a> Parser<'a> {
                             self.advance();
                             self.class_base_type(type_name)
                         }
-                        _ => return Err("Expected type for array 4")
+                        _ => return Err("Expected type for array 4"),
                     };
 
                     match self.current()? {
                         Token::RSquareBrace => self.advance(),
-                        _ => return Err("Expected ] to end array type")
+                        _ => return Err("Expected ] to end array type"),
                     };
 
                     BaseType::Array(length as i64, Box::new(array_return_type))
@@ -1178,7 +1192,7 @@ impl<'a> Parser<'a> {
             Token::Const(pos, type_name) => {
                 self.advance()?;
                 Ok(Some(self.class_base_type(type_name)))
-            },
+            }
             _ => Err("Expected a return type after an arrow"),
         }
     }
@@ -1416,28 +1430,35 @@ impl<'a> Parser<'a> {
                             Some(asgnLvar) => match asgnLvar {
                                 Node::AssignLocalVar(asgnLvar) => {
                                     let return_type_name = match asgnLvar.value.as_ref() {
-                                            Node::Call(call) => self.pajama_class_name(&call.return_type),
-                                            Node::Int(_) => "Int".to_string(),
-                                            Node::LocalVar(val) => val.pajama_class_name().to_string(),
-                                            Node::Send(send) => self.pajama_class_name(&send.return_type),
-                                            Node::StringLiteral(_) => "Str".to_string(),
-                                            Node::BuildStruct(build) => {
-                                                return Ok(Node::LocalVar(LocalVar {
-                                                    name: ident_name,
-                                                    return_type: Some(build.return_type.clone()),
-                                                }))
-                                            }
-                                            Node::Array(array) => {
-                                                return Ok(Node::LocalVar(LocalVar {
-                                                    name: ident_name,
-                                                    return_type: Some(BaseType::Array(array.length, Box::new(array.item_type.clone()))),
-                                                }))
-                                            }
-                                            _ => {
-                                                println!("{:#?}", asgnLvar.value.as_ref());
-                                                return Err("Local variable assignment was given an unsupprted node, given")
-                                            }
-                                        };
+                                        Node::Call(call) => {
+                                            self.pajama_class_name(&call.return_type)
+                                        }
+                                        Node::Int(_) => "Int".to_string(),
+                                        Node::LocalVar(val) => val.pajama_class_name().to_string(),
+                                        Node::Send(send) => {
+                                            self.pajama_class_name(&send.return_type)
+                                        }
+                                        Node::StringLiteral(_) => "Str".to_string(),
+                                        Node::BuildStruct(build) => {
+                                            return Ok(Node::LocalVar(LocalVar {
+                                                name: ident_name,
+                                                return_type: Some(build.return_type.clone()),
+                                            }))
+                                        }
+                                        Node::Array(array) => {
+                                            return Ok(Node::LocalVar(LocalVar {
+                                                name: ident_name,
+                                                return_type: Some(BaseType::Array(
+                                                    array.length,
+                                                    Box::new(array.item_type.clone()),
+                                                )),
+                                            }))
+                                        }
+                                        _ => {
+                                            println!("{:#?}", asgnLvar.value.as_ref());
+                                            return Err("Local variable assignment was given an unsupprted node, given");
+                                        }
+                                    };
 
                                     Ok(Node::LocalVar(LocalVar {
                                         name: ident_name,
@@ -1643,7 +1664,7 @@ impl<'a> Parser<'a> {
                 self.advance_optional_whitespace();
 
                 if let Token::RParen = self.curr() {
-                    return Err("At least one struct field is required")
+                    return Err("At least one struct field is required");
                 }
 
                 let mut args = vec![];
@@ -1667,11 +1688,13 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                Ok(Node::BuildStruct(BuildStruct { name: const_name.clone(), args, return_type: BaseType::Struct(const_name.clone()) }))
+                Ok(Node::BuildStruct(BuildStruct {
+                    name: const_name.clone(),
+                    args,
+                    return_type: BaseType::Struct(const_name.clone()),
+                }))
             }
-            _ => {
-                Ok(Node::Const(Const { name: const_name }))
-            }
+            _ => Ok(Node::Const(Const { name: const_name })),
         }
     }
 
@@ -1720,8 +1743,12 @@ impl<'a> Parser<'a> {
             Token::RSquareBrace => {
                 self.advance()?;
                 let default_type = BaseType::Byte;
-                return Ok(Node::Array(Array { items, item_type: default_type, length: 0 }))
-            },
+                return Ok(Node::Array(Array {
+                    items,
+                    item_type: default_type,
+                    length: 0,
+                }));
+            }
             _ => {}
         }
 
@@ -1750,7 +1777,11 @@ impl<'a> Parser<'a> {
 
         let length = items.len() as i64;
 
-        Ok(Node::Array(Array { items, item_type, length }))
+        Ok(Node::Array(Array {
+            items,
+            item_type,
+            length,
+        }))
     }
 
     fn parse_loop_expr(
@@ -1955,8 +1986,7 @@ impl<'a> Parser<'a> {
             "Int32" => BaseType::Int32,
             "Int64" => BaseType::Int64,
             "FnRef" => BaseType::FnRef,
-            _name => BaseType::Class(_name.to_string())
-            // BaseType::Void => "".to_string(),
+            _name => BaseType::Class(_name.to_string()), // BaseType::Void => "".to_string(),
         }
     }
 }
