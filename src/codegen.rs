@@ -53,14 +53,14 @@ pub fn print_class(class: SockaddrIn) {
 
 #[no_mangle]
 pub fn print_bytes(bytes: *const u8, len: i64) {
-    println!("bytes: {:#?}", bytes);
-    println!("len: {:#?}", len);
-
     let slice = unsafe { std::slice::from_raw_parts(bytes, len as usize) };
 
     for byte in slice {
         print!("{}", *byte as char);
     }
+
+    print!("\n");
+
     std::io::Write::flush(&mut std::io::stdout()).unwrap(); // Ensure output is displayed
 }
 
