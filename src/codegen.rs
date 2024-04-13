@@ -1,4 +1,4 @@
-use crate::parser::{BaseType, Def, Node, ParserResult};
+use crate::parser::{BaseType, Def, Node, ParserResult, FnRef};
 use crate::{mi_malloc, parser};
 use melior::dialect::llvm::attributes::{linkage, Linkage};
 use melior::dialect::llvm::AllocaOptions;
@@ -28,6 +28,8 @@ use std::borrow::BorrowMut;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 
+
+
 #[no_mangle]
 #[derive(Debug)]
 #[repr(C)]
@@ -52,10 +54,6 @@ pub fn print_class(class: SockaddrIn) {
     unsafe{ println!("print_class: {:#?}", class) };
 }
 
-#[no_mangle]
-pub fn print_int(int: i64) {
-    println!("print_int: {:#?}", int);
-}
 
 #[no_mangle]
 pub fn print_bytes(bytes: *const u8, len: i64) {
@@ -67,11 +65,9 @@ pub fn print_bytes(bytes: *const u8, len: i64) {
     for byte in slice {
         print!("{}", *byte as char);
     }
-    // stdout().flush().unwrap(); // Ensure output is displayed
+    std::io::Write::flush(&mut std::io::stdout()).unwrap(); // Ensure output is displayed
 }
 
-#[used]
-static EXTERNAL_FNS3: [fn(i64); 1] = [print_int];
 #[used]
 static EXTERNAL_FNS4: [fn(*const u8, i64); 1] = [print_bytes];
 #[used]
@@ -90,6 +86,9 @@ pub struct LlvmTypes<'c> {
     pub ptr_type: Type<'c>,
     pub struct_ptr_type: Type<'c>,
     pub struct_type: Type<'c>,
+    pub fn_ptr: Type<'c>,
+    pub fn_type: Type<'c>,
+    pub void_type: Type<'c>,
 }
 
 /// Defines the `Expr` compiler.
@@ -139,6 +138,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let struct_ptr_type = llvm::r#type::r#pointer(struct_type, 0);
         let ptr_type = llvm::r#type::opaque_pointer(context);
 
+        let fn_type = llvm::r#type::function(llvm::r#type::void(context), &[], false);
+        // let fn_type = FunctionType::new(context, &[], &[]).into();
+        let fn_ptr = llvm::r#type::pointer(fn_type, 0);
+
+        let void_type = llvm::r#type::void(context);
+
         let llvm_types = LlvmTypes {
             i16_type,
             i32_type,
@@ -150,6 +155,9 @@ impl<'c, 'm> Compiler<'c, 'm> {
             ptr_type,
             struct_ptr_type,
             struct_type,
+            fn_ptr,
+            fn_type,
+            void_type,
         };
 
         let mut class_type_index = HashMap::new();
@@ -358,6 +366,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 Node::Array(_) => todo!(),
                 Node::BuildStruct(_) => todo!(),
                 Node::Struct(_) => todo!(),
+                Node::FnRef(_) => todo!(),
             }
         }
     }
@@ -383,6 +392,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let node_type = self.basetype_to_mlir_type(&node.return_type);
         let node_value = match node.value.as_ref() {
             Node::Int(int_node) => int_node.value,
+            Node::FnRef(_) => todo!(),
             Node::Access(_) => todo!(),
             Node::AssignAttribute(_) => todo!(),
             Node::AssignAttributeAccess(_) => todo!(),
@@ -449,19 +459,23 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
         let fn_signature = if node.main_fn {
             let i32_type = IntegerType::new(&self.context, 32).into();
-            TypeAttribute::new(FunctionType::new(&self.context, &inputs, &[i32_type]).into())
+            // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &[i32_type]).into())
+            TypeAttribute::new(llvm::r#type::function(i32_type, &inputs, false))
         } else {
             let mut results = match &node.prototype.return_type {
                 Some(rt) => vec![self.basetype_to_mlir_type(&rt)],
                 None => vec![],
             };
 
-            if node.prototype.name.ends_with(".new") {
+            if node.prototype.name.ends_with(".new") || node.prototype.name.ends_with(".alloca") {
                 // value is returned by sret
                 results = vec![];
             }
 
-            TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into())
+            let result = results.first().unwrap_or(&self.llvm_types.void_type);
+
+            // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into())
+            TypeAttribute::new(llvm::r#type::function(result.clone(), &inputs, false))
         };
 
         let region = self.compile_fn_body(node, mctx).unwrap();
@@ -474,14 +488,15 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ];
 
         if node.main_fn {
-            attributes.push((
-                Identifier::new(&self.context, "llvm.emit_c_interface"),
-                Attribute::parse(&self.context, &format!("unit")).unwrap(),
-            ));
+            // attributes.push((
+            //     Identifier::new(&self.context, "llvm.emit_c_interface"),
+            //     Attribute::parse(&self.context, &format!("unit")).unwrap(),
+            // ));
         }
 
         let location = Location::unknown(&self.context);
-        let operation = func::func(
+        // let operation = func::func(
+        let operation = llvm::func(
             &self.context,
             fn_name,
             fn_signature,
@@ -515,15 +530,19 @@ impl<'c, 'm> Compiler<'c, 'm> {
             None => vec![],
         };
 
+        let result = results.first().unwrap_or(&self.llvm_types.void_type);
+
         let fn_signature =
-            TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
+            // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
+            TypeAttribute::new(llvm::r#type::function(result.clone(), &inputs, false));
+
         let region = Region::new();
         let attributes = &[(
             Identifier::new(&self.context, "sym_visibility"),
             StringAttribute::new(&self.context, "private").into(),
         )];
         let location = Location::unknown(&self.context);
-        let operation = func::func(
+        let operation = llvm::func(
             &self.context,
             name,
             fn_signature,
@@ -574,10 +593,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
         };
 
         if node.body.iter().len() == 0 && !node.main_fn {
-            block.append_operation(func::r#return(
-                &[],
-                Location::unknown(&self.context),
-            ));
+            block.append_operation(
+                llvm::r#return(
+                    None,
+                    Location::unknown(&self.context)
+                )
+            );
 
             let region = Region::new();
             region.append_block(block);
@@ -600,8 +621,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
             .unwrap()
             .into();
 
-            block.append_operation(func::r#return(
-                &[success_int_value],
+            block.append_operation(llvm::r#return(
+                Some(success_int_value),
                 Location::unknown(&self.context),
             ));
         }
@@ -654,8 +675,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
                         .unwrap()
                         .into();
 
-                    block.append_operation(func::r#return(
-                        &[success_int_value],
+                    block.append_operation(llvm::r#return(
+                        Some(success_int_value),
                         Location::unknown(&self.context),
                     ));
                 } else {
@@ -666,21 +687,21 @@ impl<'c, 'm> Compiler<'c, 'm> {
                             }
                             _ => {
                                 if node.prototype.name.ends_with(".new") {
-                                    block.append_operation(func::r#return(
-                                        &[],
+                                    block.append_operation(llvm::r#return(
+                                        None,
                                         Location::unknown(&self.context),
                                     ));
                                 } else {
-                                    block.append_operation(func::r#return(
-                                        &[return_val.unwrap()],
+                                    block.append_operation(llvm::r#return(
+                                        None,
                                         Location::unknown(&self.context),
                                     ));
                                 }
                             }
                         },
                         None => {
-                            block.append_operation(func::r#return(
-                                &[],
+                            block.append_operation(llvm::r#return(
+                                None,
                                 Location::unknown(&self.context),
                             ));
                         }
@@ -714,10 +735,11 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::Binary(binary) => self.compile_binary(block, binary, ctx, mctx),
             Node::Call(call) => self.compile_call(block, call, ctx, mctx),
             Node::Int(nb) => self.compile_int(block, nb),
+            Node::FnRef(fn_ref) => self.compile_fn_ref(block, fn_ref, ctx, mctx),
             Node::LocalVar(lvar) => self.compile_local_var(block, lvar, ctx, mctx),
             Node::Loop(node) => self.compile_loop(block, node, ctx, mctx),
             Node::Ret(ret) => self.compile_return(block, ret, ctx, mctx),
-            Node::SelfRef(lvar) => self.compile_self_ref(block, lvar),
+            Node::SelfRef(lvar) => self.compile_self_ref(block, lvar, ctx, mctx),
             Node::Send(node) => self.compile_send(block, node, ctx, mctx),
             Node::StringLiteral(string) => self.compile_string_literal(block, string, ctx, mctx),
             Node::Const(node) => self.compile_const_ref(block, node),
@@ -917,23 +939,47 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
+
+
         let call_node = match send_node.message.as_ref() {
             Node::Call(call_node) => call_node,
             _ => return Err("Expected send_node message to be a Call"),
         };
 
+        println!("{:#?}", send_node);
+
+        println!("{:#?}", "ctx.lvars");
+        println!("{:#?}", ctx.lvars);
+
         let value = match send_node.receiver.as_ref() {
             Node::LocalVar(local_var) => match &local_var.return_type {
                 Some(rt) => {
-                    let value = ctx.lvars.get(&local_var.name).unwrap();
+                    let value = match ctx.lvars.get(&local_var.name) {
+                        Some(value) => *value,
+                        None => {
+                            if call_node.fn_name == "fn_ref" {
+                                let fn_ref = FnRef {
+                                    fn_name: local_var.name.clone()
+                                };
+
+                                return self.compile_fn_ref(block, &fn_ref, ctx, mctx);
+                            } else {
+                                todo!()
+                            }
+                        },
+                    };
                     // let value = self.compile_local_var(block, local_var, ctx, mctx);
-                    Ok(Some(*value))
+                    Ok(Some(value))
                 }
                 None => todo!(),
             },
             Node::Const(const_node) => {
                 // Instantiating a class requires a sret
                 let value = if call_node.fn_name.ends_with(".new") {
+                    let class_type = self.class_type_index.get(&const_node.name).unwrap();
+                    // add sret
+                    self.append_alloca_class(class_type.clone(), block)
+                } else if call_node.fn_name.ends_with(".alloca") {
                     let class_type = self.class_type_index.get(&const_node.name).unwrap();
                     // add sret
                     self.append_alloca_class(class_type.clone(), block)
@@ -997,23 +1043,40 @@ impl<'c, 'm> Compiler<'c, 'm> {
         // }
 
         let location = Location::unknown(&self.context);
-        let mut result = match &send_node.return_type {
+        let mut results = match &send_node.return_type {
             Some(base_type) => vec![self.basetype_to_mlir_type(&base_type)],
             None => vec![],
         };
 
-        if call_node.fn_name.ends_with(".new") {
-            result = vec![];
+        if call_node.fn_name.ends_with(".new") || call_node.fn_name.ends_with(".alloca") {
+            results = vec![];
         }
 
-        let function_type = FunctionType::new(&self.context, &inputs, &result);
+        // let result = results.first().unwrap_or(&self.llvm_types.void_type);
 
-        let function = block.append_operation(func::constant(
-            &self.context,
-            FlatSymbolRefAttribute::new(&self.context, &call_node.fn_name.as_str()),
-            function_type,
-            location,
-        ));
+        // let function_type =
+        //     // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
+        //     llvm::r#type::function(result.clone(), &inputs, false);
+
+        let function_type = FunctionType::new(&self.context, &inputs, &results);
+
+
+
+        // let function = block.append_operation(llvm::global(
+        //     &self.context,
+        //     StringAttribute::new(&self.context, temp_name.as_str()),
+        //     Some(string_attr.into()),
+        //     i8_array_type,
+        //     region,
+        //     Location::unknown(&self.context),
+        // ));
+
+        // let function = block.append_operation(func::constant(
+        //     &self.context,
+        //     FlatSymbolRefAttribute::new(&self.context, &call_node.fn_name.as_str()),
+        //     function_type,
+        //     location,
+        // ));
 
         let mut compiled_args = vec![receiver_value];
 
@@ -1025,12 +1088,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
             let arg_return_type = self.node_base_type(arg).unwrap();
             let prototype_arg_type = prototype.args[index + 1].return_type.clone();
 
-            println!("{:#?}", prototype);
-            println!("{:#?}", arg_return_type);
+            println!("prototype: {:#?}", prototype);
+            println!("arg_return_type: {:#?}", arg_return_type);
 
-            println!("{:#?}", prototype_arg_type);
+            println!("prototype_arg_type: {:#?}", prototype_arg_type);
 
-            println!("{:#?}", arg);
+            println!("arg: {:#?}", arg);
 
             // refactor, duplicate of call
             value = self.compile_type_cast(block, value, arg_return_type, prototype_arg_type);
@@ -1044,21 +1107,23 @@ impl<'c, 'm> Compiler<'c, 'm> {
         // }
 
         if let Some(_) = &send_node.return_type {
-            if call_node.fn_name.ends_with(".new") {
-                block.append_operation(func::call_indirect(
-                    function.result(0).unwrap().into(),
+            if call_node.fn_name.ends_with(".new") || call_node.fn_name.ends_with(".alloca") {
+                block.append_operation(llvm::call(
+                    &self.context,
+                    FlatSymbolRefAttribute::new(&self.context, call_node.fn_name.as_str()),
                     &compiled_args,
-                    &function_type.result(0).into_iter().collect::<Vec<_>>(),
+                    &results,
                     location,
                 ));
 
                 value
             } else {
                 let value = block
-                    .append_operation(func::call_indirect(
-                        function.result(0).unwrap().into(),
+                    .append_operation(llvm::call(
+                        &self.context,
+                        FlatSymbolRefAttribute::new(&self.context, call_node.fn_name.as_str()),
                         &compiled_args,
-                        &function_type.result(0).into_iter().collect::<Vec<_>>(),
+                        &results,
                         location,
                     ))
                     .result(0)
@@ -1067,10 +1132,11 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 Ok(Some(value))
             }
         } else {
-            block.append_operation(func::call_indirect(
-                function.result(0).unwrap().into(),
+            block.append_operation(llvm::call(
+                &self.context,
+                FlatSymbolRefAttribute::new(&self.context, call_node.fn_name.as_str()),
                 &compiled_args,
-                &function_type.result(0).into_iter().collect::<Vec<_>>(),
+                &results,
                 location,
             ));
 
@@ -1086,6 +1152,10 @@ impl<'c, 'm> Compiler<'c, 'm> {
         prototype_arg_type: BaseType,
     ) -> Value<'c, 'a> {
         if arg_return_type != prototype_arg_type {
+            println!("{:#?}", "mismatch:");
+            println!("{:#?}", arg_return_type);
+            println!("{:#?}", prototype_arg_type);
+
             let cast_type = self.basetype_to_mlir_type(&prototype_arg_type);
 
             match arg_return_type {
@@ -1116,6 +1186,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::BytePtr => todo!(),
                     BaseType::Void => todo!(),
                     BaseType::Struct(_) => todo!(),
+                    BaseType::FnRef => todo!(),
                 },
                 BaseType::Int => match prototype_arg_type {
                     BaseType::Byte => todo!(),
@@ -1136,6 +1207,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::Struct(_) => todo!(),
                     BaseType::BytePtr => todo!(),
                     BaseType::Void => todo!(),
+                    BaseType::FnRef => todo!(),
                 },
                 BaseType::Int16 => match prototype_arg_type {
                     BaseType::Byte => {
@@ -1164,6 +1236,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::BytePtr => todo!(),
                     BaseType::Void => todo!(),
                     BaseType::Struct(_) => todo!(),
+                    BaseType::FnRef => todo!(),
                 },
                 BaseType::Int32 => match prototype_arg_type {
                     BaseType::Byte => {
@@ -1208,6 +1281,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::BytePtr => todo!(),
                     BaseType::Void => todo!(),
                     BaseType::Struct(_) => todo!(),
+                    BaseType::FnRef => todo!(),
                 },
                 BaseType::Int64 => match prototype_arg_type {
                     BaseType::Byte => {
@@ -1244,6 +1318,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::BytePtr => todo!(),
                     BaseType::Void => todo!(),
                     BaseType::Struct(_) => todo!(),
+                    BaseType::FnRef => todo!(),
                 },
                 BaseType::Array(_, _) => match prototype_arg_type {
                     BaseType::Byte => todo!(),
@@ -1264,19 +1339,66 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     BaseType::Struct(_) => todo!(),
                     BaseType::BytePtr => todo!(),
                     BaseType::Void => todo!(),
+                    BaseType::FnRef => todo!(),
                 },
-                BaseType::Class(_) => {
-                        value = block
-                            .append_operation(
-                                llvm::bitcast(value, cast_type, Location::unknown(&self.context))
-                            )
-                            .result(0)
-                            .unwrap()
-                            .into();
+                BaseType::Class(class_name) => {
+                    value = block
+                        .append_operation(
+                            llvm::bitcast(value, cast_type, Location::unknown(&self.context))
+                        )
+                        .result(0)
+                        .unwrap()
+                        .into();
                 },
-                BaseType::BytePtr => todo!(),
+                BaseType::BytePtr => {
+                    match prototype_arg_type {
+                        BaseType::Byte => todo!(),
+                        BaseType::Int => todo!(),
+                        BaseType::Int16 => todo!(),
+                        BaseType::Int32 => todo!(),
+                        BaseType::Int64 => todo!(),
+                        BaseType::FnRef => todo!(),
+                        BaseType::Array(_, _) => todo!(),
+                        BaseType::Class(class_name) => {
+                            // pj_alloc_struct returns a BytePtr, this casts it to a user defined class
+                            value = block
+                                .append_operation(
+                                    llvm::bitcast(value, cast_type, Location::unknown(&self.context))
+                                )
+                                .result(0)
+                                .unwrap()
+                                .into();
+                        },
+                        BaseType::Struct(_) => todo!(),
+                        BaseType::BytePtr => todo!(),
+                        BaseType::Void => todo!(),
+                    }
+                },
                 BaseType::Void => todo!(),
                 BaseType::Struct(_) => {},
+                BaseType::FnRef => {
+                    // match prototype_arg_type {
+                    //     BaseType::Byte => todo!(),
+                    //     BaseType::Int => todo!(),
+                    //     BaseType::Int16 => todo!(),
+                    //     BaseType::Int32 => todo!(),
+                    //     BaseType::Int64 => todo!(),
+                    //     BaseType::FnRef => todo!(),
+                    //     BaseType::Array(_, _) => todo!(),
+                    //     BaseType::Class(_) => todo!(),
+                    //     BaseType::Struct(_) => todo!(),
+                    //     BaseType::BytePtr => {
+                    //         value = block
+                    //             .append_operation(
+                    //                 llvm::bitcast(value, cast_type, Location::unknown(&self.context))
+                    //             )
+                    //             .result(0)
+                    //             .unwrap()
+                    //             .into();
+                    //     },
+                    //     BaseType::Void => todo!(),
+                    // }
+                },
             }
         }
 
@@ -1286,9 +1408,120 @@ impl<'c, 'm> Compiler<'c, 'm> {
     fn compile_self_ref<'a>(
         &self,
         block: &'a Block<'c>,
-        lvar: &parser::SelfRef,
+        self_ref: &parser::SelfRef,
+        ctx: &mut FnCtx<'c, 'a>,
+        mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-        todo!()
+        let lvar_value = match ctx.lvars.get("sret") {
+            Some(value) => *value,
+            None => todo!(),
+        };
+
+        return Ok(Some(lvar_value));
+    }
+
+    fn compile_fn_ref<'a>(
+        &self,
+        block: &'a Block<'c>,
+        fn_ref: &parser::FnRef,
+        ctx: &mut FnCtx<'c, 'a>,
+        mctx: &mut ModuleCtx,
+    ) -> Result<Option<Value<'c, 'a>>, &'static str> {
+        // let func_type = FunctionType::new(&self.context, &[], &[]).into();
+        let prototype = self.parser_result.index.fn_prototype_index.get(&fn_ref.fn_name).unwrap();
+
+        let mut inputs = vec![];
+
+        for arg in &prototype.args {
+            inputs.push(self.basetype_to_mlir_type(&arg.return_type));
+        }
+
+        // let results = match &prototype.return_type {
+        //     Some(base_type) => vec![self.basetype_to_mlir_type(&base_type)],
+        //     None => vec![self.llvm_types.void_type],
+        // };
+
+
+
+        // let function_type = FunctionType::new(&self.context, &inputs, &results);
+
+
+        let results = match &prototype.return_type {
+            Some(rt) => vec![self.basetype_to_mlir_type(rt)],
+            None => vec![],
+        };
+
+        let result = results.first().unwrap_or(&self.llvm_types.void_type);
+
+        let function_type =
+            // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
+            llvm::r#type::function(result.clone(), &inputs, false);
+
+
+        // let result = results.first().unwrap_or(&self.llvm_types.void_type);
+        // // let result = self.basetype_to_mlir_type(prototype.return_type)
+
+        // let function_type =
+        //     // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
+        //     llvm::r#type::function(result.clone(), &inputs, false);
+
+        let addressof_op = block
+            .append_operation(llvm::addressof(
+                &self.context,
+                &fn_ref.fn_name,
+                llvm::r#type::pointer(function_type, 0),
+                Location::unknown(&self.context),
+            ))
+            .result(0)
+            .unwrap()
+            .into();
+
+        let value = block
+            .append_operation(
+                llvm::bitcast(
+                    addressof_op, self.llvm_types.ptr_type, Location::unknown(&self.context))
+            )
+            .result(0)
+            .unwrap()
+            .into();
+
+        Ok(Some(value))
+
+        // let function_type = FunctionType::new(&self.context, &[], &[]);
+
+        // let function = block.append_operation(func::constant(
+        //     &self.context,
+        //     FlatSymbolRefAttribute::new(&self.context, fn_ref.fn_name.as_str()),
+        //     function_type,
+        //     Location::unknown(&self.context),
+        // )).result(0).unwrap().into();
+
+        // Ok(Some(func))
+
+        // let value = block
+        //     .append_operation(
+        //         llvm::bitcast(
+        //             addressof_op, self.llvm_types.ptr_type, Location::unknown(&self.context))
+        //     )
+        //     .result(0)
+        //     .unwrap()
+        //     .into();
+
+        // Ok(Some(function.result(0).unwrap().into()))
+
+        // let loaded_val = block
+        //     .append_operation(llvm::load(
+        //         &self.context,
+        //         addressof_op,
+        //         self.llvm_types.ptr_type,
+        //         Location::unknown(&self.context),
+        //         Default::default(),
+        //     ))
+        //     .result(0)
+        //     .unwrap()
+        //     .into();
+
+        // Ok(Some(loaded_val))
     }
 
     fn compile_call<'a>(
@@ -1298,7 +1531,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-        let location = Location::unknown(&self.context);
+        let prototype = self.parser_result.index.fn_prototype_index.get(&call.fn_name).unwrap();
+        // let function_type = self.prototype_to_func_type(prototype);
 
         let mut inputs = vec![];
 
@@ -1307,7 +1541,6 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
         println!("{:#?}", &call.fn_name);
 
-        let prototype = self.parser_result.index.fn_prototype_index.get(&call.fn_name).unwrap();
 
         for arg in &prototype.args {
             // use the prototype to find the value. 0 is causing i64 instead of the needed i32
@@ -1344,21 +1577,34 @@ impl<'c, 'm> Compiler<'c, 'm> {
             // inputs.push(arg_return_type);
         }
 
-        let result = match &call.return_type {
+        let results = match &call.return_type {
             Some(base_type) => vec![self.basetype_to_mlir_type(&base_type)],
             None => vec![],
         };
 
-        let function_type = FunctionType::new(&self.context, &inputs, &result);
+        let result = results.first().unwrap_or(&self.llvm_types.void_type);
 
-        let function = block.append_operation(func::constant(
-            &self.context,
-            FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str()),
-            function_type,
-            location,
-        ));
+        let function_type =
+            // TypeAttribute::new(FunctionType::new(&self.context, &inputs, &results).into());
+            llvm::r#type::function(result.clone(), &inputs, false);
+
+        // let function_type = FunctionType::new(&self.context, &inputs, &result);
+
+        // let location = Location::unknown(&self.context);
+
+
+
+        // let function = block.append_operation(func::constant(
+        //     &self.context,
+        //     FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str()),
+        //     function_type,
+        //     location,
+        // ));
 
         let mut compiled_args = vec![];
+
+        println!("{:#?}", "CALLLL");
+        println!("{:#?}", call);
 
         for (index, arg) in call.args.iter().enumerate() {
             let mut value = self.compile_expr(block, &arg, ctx, mctx).unwrap().unwrap();
@@ -1469,11 +1715,13 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
         if let Some(_) = &call.return_type {
             let value = block
-                .append_operation(func::call_indirect(
-                    function.result(0).unwrap().into(),
+                .append_operation(llvm::call(
+                    &self.context,
+                    FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str()),
                     &compiled_args,
-                    &function_type.result(0).into_iter().collect::<Vec<_>>(),
-                    location,
+                    // &function_type.result(0).into_iter().collect::<Vec<_>>(),
+                    &results,
+                    Location::unknown(&self.context),
                 ))
                 .result(0)
                 .unwrap()
@@ -1481,12 +1729,14 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
             Ok(Some(value))
         } else {
-            block.append_operation(func::call_indirect(
-                function.result(0).unwrap().into(),
-                &compiled_args,
-                &function_type.result(0).into_iter().collect::<Vec<_>>(),
-                location,
-            ));
+            block.append_operation(llvm::call(
+                    &self.context,
+                    FlatSymbolRefAttribute::new(&self.context, call.fn_name.as_str()),
+                    &compiled_args,
+                    // &function_type.result(0).into_iter().collect::<Vec<_>>(),
+                    &results,
+                    Location::unknown(&self.context),
+                ));
 
             Ok(None)
         }
@@ -2052,6 +2302,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::Array(_) => todo!(),
             Node::BuildStruct(_) => todo!(),
             Node::Struct(_) => todo!(),
+            Node::FnRef(_) => todo!(),
         };
 
         // let sret_value = ctx.lvar_stores.get(&asgn_attr.name);
@@ -2327,6 +2578,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                         // ctx.lvar_stores.insert(asgn_lvar.name.clone(), return_val.unwrap());
                         return Ok(return_val);
                     },
+                    BaseType::FnRef => {},
                 }
             }
             None => todo!(),
@@ -2447,9 +2699,10 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::Loop(_) => todo!(),
             Node::Module(_) => todo!(),
             Node::Ret(_) => todo!(),
-            Node::SelfRef(_) => todo!(),
+            Node::SelfRef(self_ref) => Some(self_ref.return_type.clone()),
             Node::Trait(_) => todo!(),
             Node::AssignConstant(_) => todo!(),
+            Node::FnRef(_) => Some(BaseType::FnRef),
         }
     }
 
@@ -2477,6 +2730,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
             BaseType::Struct(struct_name) => {
                 self.struct_type_index.get(struct_name).unwrap().clone()
             },
+            BaseType::FnRef => self.llvm_types.ptr_type.into(),
+            // BaseType::FnRef => {self.llvm_types.fn_ptr.into()},
             // BaseType::Struct(base_types) => todo!(),
         }
     }
@@ -2497,6 +2752,8 @@ fn basetype_to_mlir_type<'c>(llvm_types: LlvmTypes<'c>, return_type: &BaseType) 
         BaseType::Int64 => llvm_types.i64_type.into(),
         BaseType::Void => todo!(),
         BaseType::Struct(_) => todo!(),
+        // BaseType::FnRef => { llvm_types.fn_ptr },
+        BaseType::FnRef => { llvm_types.ptr_type },
     }
 }
 
@@ -2512,5 +2769,6 @@ pub fn pajama_class_name(base_type: &BaseType) -> String {
         BaseType::Int64 => "Int64".to_string(),
         BaseType::Void => "".to_string(),
         BaseType::Struct(_) => "Struct".to_string(),
+        BaseType::FnRef => "FnRef".to_string(),
     }
 }

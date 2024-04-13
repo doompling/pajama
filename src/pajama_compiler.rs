@@ -48,10 +48,10 @@ impl PajamaCompiler {
         pass_manager.add_pass(conversion::create_func_to_llvm());
 
         pass_manager
-            .nested_under("func.func")
+            .nested_under("llvm.func")
             .add_pass(conversion::create_arith_to_llvm());
         pass_manager
-            .nested_under("func.func")
+            .nested_under("llvm.func")
             .add_pass(conversion::create_index_to_llvm());
         pass_manager.add_pass(conversion::create_scf_to_control_flow());
         pass_manager.add_pass(conversion::create_control_flow_to_llvm());
@@ -90,7 +90,8 @@ impl PajamaCompiler {
 
         unsafe {
             engine
-                .invoke_packed("main", &mut [&mut status_code as *mut i32 as *mut ()])
+                // .invoke_packed("main", &mut [&mut status_code as *mut i32 as *mut ()])
+                .invoke_packed("main", &mut [])
                 .unwrap();
         }
     }

@@ -1,19 +1,19 @@
-def_e print_class(sock SockaddrIn)
+#def_e print_class(sock SockaddrIn)
 def_e print_int(int Int)
 def_e print_bytes(byte_ptr BytePtr, int Int)
 
 def_e perror(byte_ptr BytePtr)
 def_e exit(code Int32)
 
-def_e socket(family Int32, type Int32, protocol Int32) -> Int32
-def_e htons(hostshort Int16) -> Int16
-def_e htonl(hostshort Int32) -> Int32
-
-def_e bind(fd Int32, addr Sockaddr, addr_size Int32) -> Int32
+def_e pj_malloc_struct(name Str) -> BytePtr
+def_e pj_listen(pj_tcp_server TcpServer)
+def_e pj_poll(pj_tcp_server TcpServer)
+def_e pj_check_events(pj_tcp_server TcpServer, pj_tcp_events TcpEvents)
+def_e pj_tcp_connection_write(pj_tcp_connection TcpConnection, str Str)
 
 class Str
-   @buffer BytePtr
-   @length Int
+   @buffer     BytePtr
+   @length     Int
    @max_length Int
 end
 
@@ -25,66 +25,95 @@ def base_print_error(str Str)
    perror(str.buffer)
 end
 
-
-class KernelEvent
-   @ident  Int64   # identifier (e.g., file descriptor)
-   @filter Int16   # filter type (e.g., EVFILT_READ)
-   @flags  Int16   # action flags (e.g., EV_ADD)
-   @fflags Int32   # filter-specific flags
-   @data   Int64   # filter-specific data
-   @udata  BytePtr # opaque user data
+class Function
+   def fn_ref
+   end
 end
 
-class SockaddrIn
-   @sin_len    Byte       # length of structure (16)
-   @sin_family Byte       # AF_INET
-   @sin_port   Int16      # 16-bit TCP or UDP port number (network byte ordered)
-   @sin_addr   InAddr     # 32-bit IPv4 address (network byte ordered)
-   @sin_zero   [8 x Byte] # unused
+class TcpEvents
+   @tcp_writable_fn      FnRef
+   @tcp_data_received_fn FnRef
 end
 
-struct InAddr
-   @s_addr Int32 # 32-bit IPv4 address (network byte ordered)
+class TcpListener
 end
 
-class Sockaddr
-   @sa_len    Byte
-   @sa_family Byte        # address family: AF_xxx value
-   @sa_data   [14 x Byte] # protocol-specific address
+class IoPoll
 end
 
-class Timespec
-   @tv_sec  Int64
-   @tv_nsec Int64
+class IoEvents
 end
 
-AF_INET     Byte = 2 # IPv4 protocols
-SOCK_STREAM Int32 = 1 # stream socket type
-PROTOCOL    Int32 = 0 # zero for default (tcp/udp/sctp)
+class IoConnections
+end
 
-INADDR_ANY  Int32 = 0
+class TcpServer
+   @host         Str
+   @port         Str
+   @tcp_listener TcpListener
+   @poll         IoPoll
+   @events       IoEvents
+   @connections  IoConnections
+   @conn_id      Int
 
-SOCKADDR_SIZE Int32 = 16
+   def listen
+      pj_listen(self)
+   end
 
-ZEROE Byte  = 0
-ZEROS Int64 = 0
+   def poll
+      pj_poll(self)
+   end
 
-def main
-   socket_listen_fd = socket(AF_INET, SOCK_STREAM, PROTOCOL)
+   def check_events(tcp_events TcpEvents)
+   # def check_events(writable_fn FnRef)
+      pj_check_events(self, tcp_events)
+      # pj_check_events(self, writable_fn)
+   end
+end
 
-   print_int(socket_listen_fd)
+class TcpConnection
+   def write(str Str)
+      pj_tcp_connection_write(self, str)
+   end
+end
 
-   #port = htons(1337)
-   port = 1337
-   in_addr = InAddr(INADDR_ANY)
-   empty_data = [0, 0, 0, 0, 0, 0, 0, 0]
-   serv_addr = SockaddrIn.new(ZEROE, AF_INET, port, in_addr, empty_data)
+def tcp_writable(conn TcpConnection)
+   base_print("tcp_writable called")
+   conn.write("HELLOOOOOO")
+end
 
-   # print_int(serv_addr.sin_port)
-   # print_class(serv_addr)
+def tcp_data_received(conn TcpConnection, received_data Str)
+   base_print("tcp_data_received called")
+   base_print(received_data)
+end
 
-   bind_result = bind(socket_listen_fd, serv_addr, SOCKADDR_SIZE)
+def _mlir_ciface_main
+   server = TcpServer.new(
+      "127.0.0.1",
+      "7878",
+      pj_malloc_struct("TcpListener"), # todo: TcpListener.alloca()
+      pj_malloc_struct("IoPoll"),
+      pj_malloc_struct("IoEvents"),
+      pj_malloc_struct("IoConnections"),
+      0
+   )
+   server.listen()
 
-   print_int(bind_result)
-   base_print_error("Noo")
+   base_print("Pajama: Server listening on 127.0.0.1:7878")
+
+  event_handlers = TcpEvents.new(
+     tcp_writable.fn_ref(),
+     tcp_data_received.fn_ref()
+  )
+
+# #   loop {
+      server.poll()
+      server.check_events(event_handlers)
+      # server.check_events(
+      #    tcp_writable.fn_ref(),
+      #    tcp_data_received.fn_ref()
+      # )
+# #   }
+
+   loop {}
 end

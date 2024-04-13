@@ -165,6 +165,7 @@ fn run_type_inference(
                                 visit_build_struct_node(&attribute_index, &method_index, &lvar_index, struct_node, struct_index)
                             },
                             Node::Struct(_) => todo!(),
+                            Node::FnRef(_) => todo!(),
                         };
 
                         lvar_index.insert(assignlocalvar_node.name.clone(), return_type);
@@ -195,6 +196,10 @@ fn run_type_inference(
                     Node::Int(_) => todo!(),
                     Node::StringLiteral(_) => todo!(),
                     Node::LocalVar(node) => {
+                        match node.return_type {
+                            Some(_) => {},
+                            None => todo!(),
+                        }
                         // println!("{:#?}", node);
                     }
                     Node::Module(_) => todo!(),
@@ -233,7 +238,12 @@ fn run_type_inference(
                             Node::DefE(_) => todo!(),
                             Node::Impl(_) => todo!(),
                             Node::Int(_) => todo!(),
-                            Node::LocalVar(lvar) => lvar.return_type.clone(),
+                            Node::LocalVar(lvar) => {
+                                match lvar.return_type {
+                                    Some(_) => lvar.return_type.clone(),
+                                    None => todo!(),
+                                }
+                            },
                             Node::Loop(_) => todo!(),
                             Node::Module(_) => todo!(),
                             Node::Ret(_) => todo!(),
@@ -273,6 +283,7 @@ fn run_type_inference(
                             },
                             Node::BuildStruct(_) => todo!(),
                             Node::Struct(_) => todo!(),
+                            Node::FnRef(_) => todo!(),
                         };
                     }
                     Node::Const(_) => todo!(),
@@ -311,7 +322,12 @@ fn run_type_inference(
                             Node::DefE(_) => todo!(),
                             Node::Impl(_) => todo!(),
                             Node::Int(_) => todo!(),
-                            Node::LocalVar(lvar) => lvar.return_type.clone(),
+                            Node::LocalVar(lvar) => {
+                                match lvar.return_type {
+                                    Some(_) => lvar.return_type.clone(),
+                                    None => todo!(),
+                                }
+                            },
                             Node::Loop(_) => todo!(),
                             Node::Module(_) => todo!(),
                             Node::Ret(_) => todo!(),
@@ -351,6 +367,7 @@ fn run_type_inference(
                             },
                             Node::BuildStruct(_) => todo!(),
                             Node::Struct(_) => todo!(),
+                            Node::FnRef(_) => todo!(),
                         };
                     }
                     Node::Loop(loop_node) => {
@@ -411,6 +428,7 @@ fn run_type_inference(
                     },
                     Node::BuildStruct(_) => todo!(),
                     Node::Struct(_) => todo!(),
+                    Node::FnRef(_) => todo!(),
                 })
             }
             _ => {}
@@ -440,6 +458,11 @@ fn visit_access_node(
 ) -> Option<BaseType> {
     let class_name = match access_node.receiver.as_mut() {
         Node::LocalVar(lvar) => {
+            match lvar.return_type {
+                Some(_) => {},
+                None => todo!(),
+            }
+
             let latest_return_type = lvar_index.get(&lvar.name).unwrap();
             lvar.return_type = latest_return_type.clone();
 
@@ -469,6 +492,7 @@ fn visit_access_node(
         Node::Array(_) => "Array".to_string(),
         Node::BuildStruct(_) => todo!(),
         Node::Struct(_) => todo!(),
+        Node::FnRef(_) => todo!(),
     };
 
     let attribute_name = match access_node.message.as_mut() {
@@ -537,13 +561,23 @@ fn visit_call_node(
                 visit_binary_node(attribute_index, method_index, lvar_index, node);
             }
             Node::LocalVar(lvar) => {
+                match lvar.return_type {
+                    Some(_) => {},
+                    None => todo!(),
+                }
+
                 let latest_return_type = lvar_index.get(&lvar.name).unwrap();
                 lvar.return_type = latest_return_type.clone();
             }
             Node::StringLiteral(_) => {}
             Node::Const(_) => {},
             Node::Int(_) => {},
-            _ => todo!(),
+            Node::SelfRef(self_ref) => {
+                // Node::SelfRef(self_ref) => pajama_class_name(&self_ref.return_type),
+            }
+            _ => {
+                println!("{:#?}", arg);
+                todo!()},
         };
     }
 
@@ -567,12 +601,27 @@ fn visit_send_node(
         Node::Send(node) => visit_send_node(attribute_index, &method_index, lvar_index, node),
         Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
         Node::LocalVar(lvar) => {
+            match lvar.return_type {
+                Some(_) => {},
+                None => {
+                    // maybe a function ref!
+                    if method_index.contains_key(&lvar.name) {
+                        send_node.return_type = Some(BaseType::FnRef);
+                        lvar.return_type = Some(BaseType::FnRef);
+                        return lvar.return_type.clone();
+                    } else {
+                        // not found, return an error
+                        todo!()
+                    }
+                },
+            }
+
             let latest_return_type = lvar_index.get(&lvar.name).unwrap();
             lvar.return_type = latest_return_type.clone();
             latest_return_type.clone()
         }
         Node::Const(node) => {
-            if fn_name == "new" {
+            if fn_name == "new" || fn_name == "alloca" {
                 send_node.return_type = Some(BaseType::Class(node.name.clone()));
                 Some(BaseType::Class(node.name.clone()))
                 // return;
@@ -672,5 +721,6 @@ pub fn pajama_class_name(base_type: &BaseType) -> String {
         BaseType::Int64 => "Int64".to_string(),
         BaseType::Void => "".to_string(),
         BaseType::Struct(_) => "Struct".to_string(),
+        BaseType::FnRef => "FnRef".to_string(),
     }
 }

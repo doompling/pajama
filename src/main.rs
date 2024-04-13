@@ -3,6 +3,7 @@ mod lexer;
 mod parser;
 mod semantic_analyzer;
 mod codegen;
+mod pajama_lib;
 
 use pajama_compiler::PajamaCompiler;
 

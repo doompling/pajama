@@ -78,6 +78,11 @@ pub struct Send {
 }
 
 #[derive(Debug)]
+pub struct FnRef {
+    pub fn_name: String,
+}
+
+#[derive(Debug)]
 pub struct Int {
     pub value: u64,
 }
@@ -101,6 +106,7 @@ impl LocalVar {
                 BaseType::Byte => "Byte",
                 BaseType::BytePtr => "BytePtr",
                 BaseType::Class(class_name) => class_name.as_str(),
+                BaseType::FnRef => "FnRef",
                 BaseType::Int => "Int",
                 BaseType::Int16 => "Int16",
                 BaseType::Int32 => "Int32",
@@ -181,6 +187,7 @@ pub enum Node {
     Const(Const),
     Def(Def),
     DefE(DefE),
+    FnRef(FnRef),
     Impl(Impl),
     Int(Int),
     LocalVar(LocalVar),
@@ -202,6 +209,7 @@ pub enum BaseType {
     Int16,
     Int32,
     Int64,
+    FnRef,
 
     // Dynamic Types
     Array(i64, Box<BaseType>),
@@ -228,6 +236,7 @@ impl Arg {
             BaseType::Byte => "Byte",
             BaseType::BytePtr => "BytePtr",
             BaseType::Class(class_name) => class_name.as_str(),
+            BaseType::FnRef => "FnRef",
             BaseType::Int => "Int",
             BaseType::Int16 => "Int16",
             BaseType::Int32 => "Int32",
@@ -545,6 +554,37 @@ impl<'a> Parser<'a> {
 
             let prototype = Prototype {
                 name: format!("{}.new", mctx.class_name.clone()).to_string(),
+                args,
+                return_type: Some(BaseType::Class(class_name.clone())),
+                is_op: false,
+                prec: 0,
+            };
+
+            self.index.fn_prototype_index.insert(prototype.name.clone(), prototype.clone());
+
+            let new_fn = Node::Def(Def {
+                main_fn: false,
+                prototype,
+                body,
+                class_name: mctx.class_name.clone(),
+                impl_name: "".to_string(),
+                trait_name: "".to_string(),
+            });
+
+            functions.push(new_fn);
+
+
+
+            // Construct an alloca function
+            let mut args = vec![Arg {
+                name: "sret".to_string(),
+                return_type: BaseType::Class(mctx.class_name.clone()),
+            }];
+
+            let mut body = vec![];
+
+            let prototype = Prototype {
+                name: format!("{}.alloca", mctx.class_name.clone()).to_string(),
                 args,
                 return_type: Some(BaseType::Class(class_name.clone())),
                 is_op: false,
@@ -969,6 +1009,16 @@ impl<'a> Parser<'a> {
         }
 
         match self.curr() {
+            Token::Arrow => {
+                let return_type = self.parse_return_type()?;
+                return Ok(Prototype {
+                    name: id,
+                    args,
+                    return_type,
+                    is_op: is_operator,
+                    prec: precedence,
+                })
+            }
             Token::LParen => {
                 self.advance();
             }
@@ -1403,6 +1453,8 @@ impl<'a> Parser<'a> {
                                     .iter()
                                     .find(|node| node.name == ident_name);
 
+                                println!("{:#?}", ident_name);
+
                                 match arg_assignment {
                                     Some(arg) => Ok(Node::LocalVar(LocalVar {
                                         name: ident_name,
@@ -1410,7 +1462,11 @@ impl<'a> Parser<'a> {
                                             arg.pajama_class_name().to_string(),
                                         )),
                                     })),
-                                    None => Err("Local variable isn't assigned anywhere"),
+                                    // maybe a function reference, or just a typo lool
+                                    None => Ok(Node::LocalVar(LocalVar {
+                                        name: ident_name,
+                                        return_type: None,
+                                    })),
                                 }
                             }
                         }
@@ -1508,6 +1564,7 @@ impl<'a> Parser<'a> {
             Node::Struct(_) => todo!(),
             Node::BuildStruct(_) => todo!(),
             Node::Array(_) => todo!(),
+            Node::FnRef(_) => todo!(),
         }
     }
 
@@ -1876,12 +1933,13 @@ impl<'a> Parser<'a> {
                 BaseType::Byte => "Byte".to_string(),
                 BaseType::BytePtr => "BytePtr".to_string(),
                 BaseType::Class(class_name) => class_name.to_string(),
+                BaseType::FnRef => "FnRef".to_string(),
                 BaseType::Int => "Int".to_string(),
                 BaseType::Int16 => "Int16".to_string(),
                 BaseType::Int32 => "Int32".to_string(),
                 BaseType::Int64 => "Int64".to_string(),
-                BaseType::Void => "".to_string(),
                 BaseType::Struct(_) => "Struct".to_string(),
+                BaseType::Void => "".to_string(),
             },
             None => "".to_string(),
         }
@@ -1896,6 +1954,7 @@ impl<'a> Parser<'a> {
             "Int16" => BaseType::Int16,
             "Int32" => BaseType::Int32,
             "Int64" => BaseType::Int64,
+            "FnRef" => BaseType::FnRef,
             _name => BaseType::Class(_name.to_string())
             // BaseType::Void => "".to_string(),
         }
