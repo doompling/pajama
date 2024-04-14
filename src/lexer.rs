@@ -82,7 +82,7 @@ impl Lexer<'_> {
 
         let mut pos = self.char_pos;
         let src = self.input;
-        let start = pos;
+        let mut start = pos;
 
         pos += 1;
 
@@ -177,6 +177,8 @@ impl Lexer<'_> {
                     end_column: self.column_pos,
                 };
 
+                let mut string = String::new();
+
                 loop {
                     let ch = self.chars.next();
 
@@ -188,14 +190,45 @@ impl Lexer<'_> {
                         None => break,
                     };
 
-                    if let '"' = ch {
-                        break;
+                    match ch {
+                        '"' => break,
+                        '\\' => match self.chars.peek() {
+                            Some(next_ch) => match next_ch {
+                                'n' => {
+                                    string.push_str(&src[start + 1..pos - 1]);
+                                    string.push('\n');
+
+                                    start = pos;
+
+                                    let _ch = self.chars.next();
+
+                                    self.column_pos += 1;
+                                    pos += 1;
+                                }
+                                'r' => {
+                                    string.push_str(&src[start + 1..pos - 1]);
+                                    string.push('\r');
+
+                                    start = pos;
+
+                                    let _ch = self.chars.next();
+
+                                    self.column_pos += 1;
+                                    pos += 1;
+                                }
+                                _ => {}
+                            },
+                            None => {}
+                        },
+                        _ => {}
                     }
                 }
 
                 token_pos.end_column = self.column_pos;
 
-                Token::StringLiteral(token_pos, src[start + 1..pos - 1].to_string())
+                string.push_str(&src[start + 1..pos - 1]);
+
+                Token::StringLiteral(token_pos, string)
             }
 
             '0'..='9' => {

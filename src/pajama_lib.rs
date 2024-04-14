@@ -223,13 +223,13 @@ pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events
 
                 connections.insert(token, connection);
 
-                // Write to the connection, probably safe?
-                let pj_tcp_connection = PjTcpConnection {
-                    server: pj_tcp_server,
-                    tcp_stream: connections.get_mut(&token).unwrap(),
-                    event,
-                };
-                (pj_tcp_events.tcp_writable_fn)(&pj_tcp_connection);
+                // // Write to the connection, probably safe?
+                // let pj_tcp_connection = PjTcpConnection {
+                //     server: pj_tcp_server,
+                //     tcp_stream: connections.get_mut(&token).unwrap(),
+                //     event,
+                // };
+                // (pj_tcp_events.tcp_writable_fn)(&pj_tcp_connection);
             },
             token => {
                 // Maybe received an event for a TCP connection.
@@ -308,6 +308,8 @@ fn handle_connection_event(
             }
         }
 
+        // println!("bytes_read: {:#?}", bytes_read);
+
         if bytes_read != 0 {
             let received_data = &received_data[..bytes_read];
             let pj_str = PjStr {
@@ -315,6 +317,9 @@ fn handle_connection_event(
                 length: received_data.len() as i64,
                 max_length: received_data.len() as i64,
             };
+
+            // println!("{:#?}", "pj_string:");
+            // println!("{:#?}", pjstr_to_str(&pj_str));
 
             (pj_tcp_events.tcp_data_received_fn)(&pj_tcp_connection, &pj_str)
 
@@ -356,6 +361,19 @@ pub extern "C" fn pj_tcp_connection_write(pj_tcp_connection: &mut PjTcpConnectio
         // Create a slice from the raw buffer and length
         core::slice::from_raw_parts(pj_str.buffer as *const u8, pj_str.length as usize)
     };
+
+    // let slice = "HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: keep-alive\nContent-Length: 6".as_bytes();
+    let working_slice =
+        "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!"
+            .as_bytes();
+
+    // println!("working_slice: {:#?}", working_slice);
+    // println!("broken_slice: {:#?}", slice);
+
+    println!("working_resp: {:#?}", working_slice);
+    println!("broken_resp: {:#?}", slice);
+
+    // println!("pj_resp: {:#?}", std::str::from_utf8(slice).unwrap());
 
     // We can (maybe) write to the connection.
     match connection.write(slice) {

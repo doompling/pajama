@@ -79,12 +79,15 @@ end
 
 def tcp_writable(conn TcpConnection)
    base_print("tcp_writable called")
-   conn.write("HELLOOOOOO")
+   # conn.write("HELLOOOOOO")
 end
 
 def tcp_data_received(conn TcpConnection, received_data Str)
-   base_print("tcp_data_received called")
-   base_print(received_data)
+   # base_print("tcp_data_received called")
+   # base_print(received_data)
+   # conn.write("HELLOOOOOO")
+
+   conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!")
 end
 
 def _mlir_ciface_main
