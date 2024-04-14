@@ -113,6 +113,7 @@ pub struct ModuleCtx {
 pub struct FnCtx<'c, 'a> {
     pub lvars: HashMap<String, Value<'c, 'a>>,
     pub lvar_stores: HashMap<String, Value<'c, 'a>>,
+    pub parent_ctx: Option<Box<&'c FnCtx<'c, 'a>>>,
 }
 
 impl<'c, 'm> Compiler<'c, 'm> {
@@ -586,6 +587,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let mut ctx = FnCtx {
             lvars: HashMap::new(),
             lvar_stores: HashMap::new(),
+            parent_ctx: None,
         };
 
         if node.body.iter().len() == 0 && !node.main_fn {
@@ -754,7 +756,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         let value = match &*access.receiver {
             Node::LocalVar(lvar) => {
-                let lvar_value = ctx.lvars.get(&lvar.name).unwrap();
+                let lvar_value = self.get_lvar(&lvar.name, ctx).unwrap();
                 let attribute_index = access.index;
 
                 match &lvar.return_type {
@@ -765,7 +767,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
                         let gep = block.append_operation(llvm::get_element_ptr(
                             &self.context,
-                            *lvar_value,
+                            lvar_value,
                             DenseI32ArrayAttribute::new(&self.context, &[0, attribute_index]),
                             llvm::r#type::r#pointer(result_type, 0),
                             Location::unknown(&self.context),
@@ -841,7 +843,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 }
             }
             Node::SelfRef(self_ref) => {
-                let lvar_value = ctx.lvars.get("sret").unwrap();
+                let lvar_value = self.get_lvar(&"sret".to_string(), ctx).unwrap();
                 let attribute_index = access.index;
 
                 // Load the attribute access
@@ -849,7 +851,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
 
                 let gep = block.append_operation(llvm::get_element_ptr(
                     &self.context,
-                    *lvar_value,
+                    lvar_value,
                     DenseI32ArrayAttribute::new(&self.context, &[0, attribute_index]),
                     llvm::r#type::r#pointer(result_type, 0),
                     Location::unknown(&self.context),
@@ -941,8 +943,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let value = match send_node.receiver.as_ref() {
             Node::LocalVar(local_var) => match &local_var.return_type {
                 Some(rt) => {
-                    let value = match ctx.lvars.get(&local_var.name) {
-                        Some(value) => *value,
+                    let value = match self.get_lvar(&local_var.name, ctx) {
+                        Some(value) => value,
                         None => {
                             if call_node.fn_name == "fn_ref" {
                                 let fn_ref = FnRef {
@@ -1430,8 +1432,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-        let lvar_value = match ctx.lvars.get("sret") {
-            Some(value) => *value,
+        let lvar_value = match self.get_lvar(&"sret".to_string(), ctx) {
+            Some(value) => value,
             None => todo!(),
         };
 
@@ -1938,8 +1940,8 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
-        let lvar_value = match ctx.lvars.get(&lvar.name) {
-            Some(value) => *value,
+        let lvar_value = match self.get_lvar(&lvar.name, ctx) {
+            Some(value) => value,
             None => todo!(),
         };
 
@@ -1954,7 +1956,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let loaded_val = block
             .append_operation(llvm::load(
                 &self.context,
-                *ctx.lvars.get(&lvar.name).unwrap(),
+                self.get_lvar(&lvar.name, ctx).unwrap(),
                 lvar_type,
                 Location::unknown(&self.context),
                 Default::default(),
@@ -2226,7 +2228,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
                 region.append_block(before_block);
                 region
             },
-            { self.compile_block(&loop_node.body, mctx)? },
+            self.compile_block(&loop_node.body, ctx, mctx)?,
             location,
         ));
 
@@ -2236,7 +2238,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
     fn compile_block(
         &self,
         nodes: &Vec<Node>,
-        // ctx: &mut FnCtx<'c, 'm>,
+        ctx: &mut FnCtx<'c, 'm>,
         mctx: &mut ModuleCtx,
     ) -> Result<Region<'c>, &'static str> {
         let builder = Block::new(&[]);
@@ -2244,6 +2246,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let mut block_ctx = FnCtx {
             lvars: HashMap::new(),
             lvar_stores: HashMap::new(),
+            parent_ctx: Some(Box::new(ctx)),
         };
 
         nodes.iter().for_each(|node| {
@@ -2314,7 +2317,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::Int(_) => todo!(),
             Node::StringLiteral(_) => todo!(),
             Node::LocalVar(lvar) => {
-                ctx.lvars.get(&lvar.name).unwrap()
+                self.get_lvar(&lvar.name, ctx).unwrap()
 
                 // match ctx.lvar_stores.get(&lvar.name) {
                 //     Some(_) => {},
@@ -2344,7 +2347,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let gep = block
             .append_operation(llvm::get_element_ptr(
                 &self.context,
-                *class_ptr_ref,
+                class_ptr_ref,
                 DenseI32ArrayAttribute::new(&self.context, &[0, assignment.access.index]),
                 llvm::r#type::r#pointer(return_val.unwrap().r#type(), 0),
                 Location::unknown(&self.context),
@@ -2516,12 +2519,12 @@ impl<'c, 'm> Compiler<'c, 'm> {
             },
         };
 
-        let sret_value = ctx.lvars.get("sret").unwrap();
+        let sret_value = self.get_lvar(&"sret".to_string(), ctx).unwrap();
 
         let gep = block
             .append_operation(llvm::get_element_ptr(
                 &self.context,
-                *sret_value,
+                sret_value,
                 DenseI32ArrayAttribute::new(&self.context, &[0, asgn_attr.index]),
                 llvm::r#type::r#pointer(return_val.r#type(), 0),
                 // return_val.r#type(),
@@ -2700,6 +2703,26 @@ impl<'c, 'm> Compiler<'c, 'm> {
         };
 
         Ok(return_val)
+    }
+
+    fn get_lvar<'a>(&self, key: &String, ctx: &FnCtx<'c, 'a>) -> Option<Value<'c, 'a>> {
+        if let Some(value) = ctx.lvars.get(key) {
+            Some(value.clone())
+        } else if let Some(parent_ctx) = &ctx.parent_ctx {
+            self.get_lvar(key, &parent_ctx)
+        } else {
+            None
+        }
+    }
+
+    fn get_lvar_store<'a>(&self, key: &String, ctx: &FnCtx<'c, 'a>) -> Option<Value<'c, 'a>> {
+        if let Some(value) = ctx.lvar_stores.get(key) {
+            Some(value.clone())
+        } else if let Some(parent_ctx) = &ctx.parent_ctx {
+            self.get_lvar(key, &parent_ctx)
+        } else {
+            None
+        }
     }
 
     pub fn node_base_type(&self, node: &Node) -> Option<BaseType> {

@@ -106,14 +106,8 @@ def _mlir_ciface_main
      tcp_data_received.fn_ref()
   )
 
-# #   loop {
+  loop {
       server.poll()
       server.check_events(event_handlers)
-      # server.check_events(
-      #    tcp_writable.fn_ref(),
-      #    tcp_data_received.fn_ref()
-      # )
-# #   }
-
-   loop {}
+  }
 end

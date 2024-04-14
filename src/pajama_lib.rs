@@ -223,6 +223,7 @@ pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events
 
                 connections.insert(token, connection);
 
+                // Write to the connection, probably safe?
                 let pj_tcp_connection = PjTcpConnection {
                     server: pj_tcp_server,
                     tcp_stream: connections.get_mut(&token).unwrap(),

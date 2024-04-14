@@ -274,6 +274,7 @@ pub struct DefE {
 
 #[derive(Debug)]
 pub struct Loop {
+    // pub args: HashMap<String, LocalVar>,
     pub body: Vec<Node>,
 }
 
