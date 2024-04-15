@@ -13,6 +13,7 @@ pub struct PjTcpServer {
     poll: *mut Poll,
     events: *mut Events,
     connections: *mut HashMap<Token, TcpStream>,
+    requests: *mut HashMap<Token, Vec<u8>>,
     conn_id: i64,
 }
 
@@ -109,6 +110,13 @@ pub extern "C" fn pj_malloc_struct(pj_name: &PjStr) -> *mut c_void {
             unsafe { std::ptr::write(ptr as *mut HashMap<Token, TcpStream>, HashMap::new()) };
             ptr
         }
+        "IoRequests" => {
+            let struct_size = size_of::<HashMap<Token, Vec<u8>>>();
+            let ptr = unsafe { malloc(struct_size as libc::size_t) as *mut c_void };
+
+            unsafe { std::ptr::write(ptr as *mut HashMap<Token, Vec<u8>>, HashMap::new()) };
+            ptr
+        }
         _name => panic!("pj_malloc_struct given unknown struct type: {}", _name),
     }
 }
@@ -184,8 +192,9 @@ pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events
     let events = unsafe { pj_tcp_server.events.as_ref().unwrap() };
     let poll = unsafe { pj_tcp_server.poll.as_ref().unwrap() };
     let server = unsafe { pj_tcp_server.tcp_listener.as_ref().unwrap() };
-    let unique_token = pj_tcp_server.conn_id;
+    // let unique_token = pj_tcp_server.conn_id;
     let connections = unsafe { pj_tcp_server.connections.as_mut().unwrap() };
+    let requests = unsafe { pj_tcp_server.requests.as_mut().unwrap() };
 
     for event in events.iter() {
         match event.token() {
@@ -212,16 +221,21 @@ pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events
 
                 println!("Accepted connection from: {}", address);
 
-                let token = next(&mut Token(unique_token as usize));
+                // let token = next(&mut Token(unique_token as usize));
+                pj_tcp_server.conn_id += 1;
+                let token = Token(pj_tcp_server.conn_id as usize);
+
                 poll.registry()
                     .register(
                         &mut connection,
                         token,
-                        Interest::READABLE.add(Interest::WRITABLE),
+                        // Interest::READABLE.add(Interest::WRITABLE),
+                        Interest::READABLE,
                     )
                     .unwrap();
 
                 connections.insert(token, connection);
+                requests.insert(token, Vec::with_capacity(512));
 
                 // // Write to the connection, probably safe?
                 // let pj_tcp_connection = PjTcpConnection {
@@ -330,8 +344,12 @@ fn handle_connection_event(
             // }
         }
 
+        registry
+            .reregister(connection, event.token(), Interest::WRITABLE)
+            .unwrap();
+
         if connection_closed {
-            println!("Connection closed");
+            // println!("Connection closed");
             return Ok(true);
         }
     }
@@ -363,15 +381,15 @@ pub extern "C" fn pj_tcp_connection_write(pj_tcp_connection: &mut PjTcpConnectio
     };
 
     // let slice = "HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: keep-alive\nContent-Length: 6".as_bytes();
-    let working_slice =
-        "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!"
-            .as_bytes();
+    // let working_slice =
+    //     "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!"
+    //         .as_bytes();
 
     // println!("working_slice: {:#?}", working_slice);
     // println!("broken_slice: {:#?}", slice);
 
-    println!("working_resp: {:#?}", working_slice);
-    println!("broken_resp: {:#?}", slice);
+    // println!("working_resp: {:#?}", working_slice);
+    // println!("broken_resp: {:#?}", slice);
 
     // println!("pj_resp: {:#?}", std::str::from_utf8(slice).unwrap());
 

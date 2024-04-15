@@ -47,6 +47,9 @@ end
 class IoConnections
 end
 
+class IoRequests
+end
+
 class TcpServer
    @host         Str
    @port         Str
@@ -54,6 +57,7 @@ class TcpServer
    @poll         IoPoll
    @events       IoEvents
    @connections  IoConnections
+   @requests     IoRequests
    @conn_id      Int
 
    def listen
@@ -78,16 +82,18 @@ class TcpConnection
 end
 
 def tcp_writable(conn TcpConnection)
-   base_print("tcp_writable called")
+   # base_print("tcp_writable called")
    # conn.write("HELLOOOOOO")
+   conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\nHello, world!")
 end
 
 def tcp_data_received(conn TcpConnection, received_data Str)
-   # base_print("tcp_data_received called")
-   # base_print(received_data)
+   base_print("tcp_data_received called")
+   base_print(received_data)
    # conn.write("HELLOOOOOO")
 
-   conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!")
+   # conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!")
+   #conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\nHello, world!")
 end
 
 def _mlir_ciface_main
@@ -98,6 +104,7 @@ def _mlir_ciface_main
       pj_malloc_struct("IoPoll"),
       pj_malloc_struct("IoEvents"),
       pj_malloc_struct("IoConnections"),
+      pj_malloc_struct("IoRequests"),
       0
    )
    server.listen()
