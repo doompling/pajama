@@ -13,13 +13,13 @@ pub struct PjTcpServer {
     poll: *mut Poll,
     events: *mut Events,
     connections: *mut HashMap<Token, TcpStream>,
-    requests: *mut HashMap<Token, Vec<u8>>,
+    buffers: *mut HashMap<Token, Vec<u8>>,
     conn_id: i64,
 }
 
 #[repr(C)]
 pub struct PjTcpEvents {
-    tcp_writable_fn: fn(&PjTcpConnection),
+    // tcp_writable_fn: fn(&PjTcpConnection),
     tcp_data_received_fn: fn(&PjTcpConnection, &PjStr),
 }
 
@@ -28,6 +28,7 @@ pub struct PjTcpConnection {
     server: *mut PjTcpServer,
     tcp_stream: *mut TcpStream,
     event: *const Event,
+    buffer: *mut Vec<u8>,
 }
 
 #[no_mangle]
@@ -52,6 +53,7 @@ use libc::{c_void, malloc};
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Registry, Token};
+use safer_ffi::vec;
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
@@ -110,7 +112,7 @@ pub extern "C" fn pj_malloc_struct(pj_name: &PjStr) -> *mut c_void {
             unsafe { std::ptr::write(ptr as *mut HashMap<Token, TcpStream>, HashMap::new()) };
             ptr
         }
-        "IoRequests" => {
+        "IoBuffers" => {
             let struct_size = size_of::<HashMap<Token, Vec<u8>>>();
             let ptr = unsafe { malloc(struct_size as libc::size_t) as *mut c_void };
 
@@ -177,14 +179,6 @@ pub extern "C" fn pj_poll(pj_tcp_server: &mut PjTcpServer) {
 }
 
 #[used]
-static EXTERNAL_FNS13: [extern "C" fn(fn()); 1] = [pj_ref_test];
-
-#[no_mangle]
-pub extern "C" fn pj_ref_test(tcp_writable: fn()) {
-    tcp_writable()
-}
-
-#[used]
 static EXTERNAL_FNS11: [extern "C" fn(&mut PjTcpServer, &PjTcpEvents); 1] = [pj_check_events];
 
 #[no_mangle]
@@ -194,7 +188,7 @@ pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events
     let server = unsafe { pj_tcp_server.tcp_listener.as_ref().unwrap() };
     // let unique_token = pj_tcp_server.conn_id;
     let connections = unsafe { pj_tcp_server.connections.as_mut().unwrap() };
-    let requests = unsafe { pj_tcp_server.requests.as_mut().unwrap() };
+    let buffers = unsafe { pj_tcp_server.buffers.as_mut().unwrap() };
 
     for event in events.iter() {
         match event.token() {
@@ -235,7 +229,7 @@ pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events
                     .unwrap();
 
                 connections.insert(token, connection);
-                requests.insert(token, Vec::with_capacity(512));
+                buffers.insert(token, Vec::with_capacity(512));
 
                 // // Write to the connection, probably safe?
                 // let pj_tcp_connection = PjTcpConnection {
@@ -270,12 +264,6 @@ pub extern "C" fn pj_check_events(pj_tcp_server: &mut PjTcpServer, pj_tcp_events
     }
 }
 
-fn next(current: &mut Token) -> Token {
-    let next = current.0;
-    current.0 += 1;
-    Token(next)
-}
-
 /// Returns `true` if the connection is done.
 fn handle_connection_event(
     pj_tcp_server: &mut PjTcpServer,
@@ -284,17 +272,16 @@ fn handle_connection_event(
     connection: &mut TcpStream,
     event: &Event,
 ) -> io::Result<bool> {
-    let pj_tcp_connection = PjTcpConnection {
-        server: pj_tcp_server,
-        tcp_stream: connection,
-        event,
-    };
-
-    if event.is_writable() {
-        (pj_tcp_events.tcp_writable_fn)(&pj_tcp_connection);
-    }
-
     if event.is_readable() {
+        let buffers = unsafe { pj_tcp_server.buffers.as_mut().unwrap() };
+        let buffer = buffers.get_mut(&event.token()).unwrap();
+        let pj_tcp_connection = PjTcpConnection {
+            server: pj_tcp_server,
+            tcp_stream: connection,
+            event,
+            buffer,
+        };
+
         let mut connection_closed = false;
         let mut received_data = vec![0; 4096];
         let mut bytes_read = 0;
@@ -335,7 +322,16 @@ fn handle_connection_event(
             // println!("{:#?}", "pj_string:");
             // println!("{:#?}", pjstr_to_str(&pj_str));
 
-            (pj_tcp_events.tcp_data_received_fn)(&pj_tcp_connection, &pj_str)
+            (pj_tcp_events.tcp_data_received_fn)(&pj_tcp_connection, &pj_str);
+
+            // let buffers = unsafe { pj_tcp_server.buffers.as_mut().unwrap() };
+            // let response_buffer = buffers.get_mut(&event.token()).unwrap();
+
+            // received_data.iter().for_each(|b| {
+            //     response_buffer.push(*b);
+            // });
+
+            // unsafe {pj_tcp_connection.server.as_mut().unwrap().buffers}
 
             // if let Ok(str_buf) = from_utf8(received_data) {
             //     println!("Received data: {}", str_buf.trim_end());
@@ -354,7 +350,97 @@ fn handle_connection_event(
         }
     }
 
+
+    if event.is_writable() {
+        // (pj_tcp_events.tcp_writable_fn)(&pj_tcp_connection);
+        pj_tcp_connection_flush(connection, event, &pj_tcp_server);
+    }
+
     Ok(false)
+}
+
+#[used]
+static EXTERNAL_FNS17: [extern "C" fn(&mut PjTcpConnection, &PjStr); 1] = [pj_tcp_connection_buffer];
+
+#[no_mangle]
+pub extern "C" fn pj_tcp_connection_buffer(pj_tcp_connection: &mut PjTcpConnection, pj_str: &PjStr) {
+    pjstr_to_str(pj_str).as_bytes().iter().for_each(|b| {
+        let buffer = unsafe { pj_tcp_connection.buffer.as_mut().unwrap() };
+        buffer.push(*b);
+    });
+}
+
+
+#[used]
+static EXTERNAL_FNS20: [extern "C" fn(&mut TcpStream, &Event, &PjTcpServer); 1] = [pj_tcp_connection_flush];
+
+#[no_mangle]
+pub extern "C" fn pj_tcp_connection_flush(connection: &mut TcpStream, event: &Event, pj_tcp_server: &PjTcpServer) {
+    let buffers = unsafe { pj_tcp_server.buffers.as_mut().unwrap() };
+    let buffer = buffers.get_mut(&event.token()).unwrap();
+
+    // let connection = unsafe { pj_tcp_connection.tcp_stream.as_mut().unwrap() };
+    let registry = unsafe {
+        pj_tcp_server
+            .poll
+            .as_ref()
+            .unwrap()
+    }
+    .registry();
+    // let event = unsafe { pj_tcp_connection.event.as_ref().unwrap() };
+
+    // let slice = unsafe {
+    //     // Create a slice from the raw buffer and length
+    //     core::slice::from_raw_parts(pj_str.buffer as *const u8, pj_str.length as usize)
+    // };
+
+    // // let slice = "HTTP/1.1 200 OK\nContent-Type: text/html\nConnection: keep-alive\nContent-Length: 6".as_bytes();
+    // // let working_slice =
+    // //     "HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!"
+    // //         .as_bytes();
+
+    // // println!("working_slice: {:#?}", working_slice);
+    // // println!("broken_slice: {:#?}", slice);
+
+    // // println!("working_resp: {:#?}", working_slice);
+    // // println!("broken_resp: {:#?}", slice);
+
+    // // println!("pj_resp: {:#?}", std::str::from_utf8(slice).unwrap());
+
+    // We can (maybe) write to the connection.
+    match connection.write(buffer) {
+        // We want to write the entire `DATA` buffer in a single go. If we
+        // write less we'll return a short write error (same as
+        // `io::Write::write_all` does).
+        Ok(n) if n < buffer.len() => {
+            buffer.clear();
+            // return Err(io::ErrorKind::WriteZero.into())
+            println!("{:#?}", io::ErrorKind::WriteZero);
+            return;
+        }
+        Ok(_) => {
+            buffer.clear();
+            // After we've written something we'll reregister the connection
+            // to only respond to readable events.
+            registry
+                .reregister(connection, event.token(), Interest::READABLE)
+                .unwrap()
+        }
+        // Would block "errors" are the OS's way of saying that the
+        // connection is not actually ready to perform this I/O operation.
+        Err(ref err) if would_block(err) => {}
+        // Got interrupted (how rude!), we'll try again.
+        Err(ref err) if interrupted(err) => {
+            return pj_tcp_connection_flush(connection, event, pj_tcp_server)
+        }
+        // Other errors we'll consider fatal.
+        // Err(err) => return Err(err),
+        Err(err) => {
+            buffer.clear();
+            println!("{:#?}", err);
+            return;
+        }
+    }
 }
 
 #[used]

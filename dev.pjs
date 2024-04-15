@@ -9,7 +9,8 @@ def_e pj_malloc_struct(name Str) -> BytePtr
 def_e pj_listen(pj_tcp_server TcpServer)
 def_e pj_poll(pj_tcp_server TcpServer)
 def_e pj_check_events(pj_tcp_server TcpServer, pj_tcp_events TcpEvents)
-def_e pj_tcp_connection_write(pj_tcp_connection TcpConnection, str Str)
+# def_e pj_tcp_connection_write(pj_tcp_connection TcpConnection, str Str)
+def_e pj_tcp_connection_buffer(pj_tcp_connection TcpConnection, str Str)
 
 class Str
    @buffer     BytePtr
@@ -31,7 +32,7 @@ class Function
 end
 
 class TcpEvents
-   @tcp_writable_fn      FnRef
+   # @tcp_writable_fn      FnRef
    @tcp_data_received_fn FnRef
 end
 
@@ -47,7 +48,7 @@ end
 class IoConnections
 end
 
-class IoRequests
+class IoBuffers
 end
 
 class TcpServer
@@ -57,7 +58,7 @@ class TcpServer
    @poll         IoPoll
    @events       IoEvents
    @connections  IoConnections
-   @requests     IoRequests
+   @buffers      IoBuffers
    @conn_id      Int
 
    def listen
@@ -77,20 +78,22 @@ end
 
 class TcpConnection
    def write(str Str)
-      pj_tcp_connection_write(self, str)
+      pj_tcp_connection_buffer(self, str)
    end
 end
 
-def tcp_writable(conn TcpConnection)
-   # base_print("tcp_writable called")
-   # conn.write("HELLOOOOOO")
-   conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\nHello, world!")
-end
+# def tcp_writable(conn TcpConnection)
+#    # base_print("tcp_writable called")
+#    # conn.write("HELLOOOOOO")
+#    conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\nHello, world!")
+# end
 
 def tcp_data_received(conn TcpConnection, received_data Str)
-   base_print("tcp_data_received called")
-   base_print(received_data)
-   # conn.write("HELLOOOOOO")
+   # base_print("tcp_data_received called")
+   # base_print(received_data)
+
+   conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\n")
+   conn.write("Haalo, world!")
 
    # conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!")
    #conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\nHello, world!")
@@ -104,7 +107,7 @@ def _mlir_ciface_main
       pj_malloc_struct("IoPoll"),
       pj_malloc_struct("IoEvents"),
       pj_malloc_struct("IoConnections"),
-      pj_malloc_struct("IoRequests"),
+      pj_malloc_struct("IoBuffers"),
       0
    )
    server.listen()
@@ -112,7 +115,7 @@ def _mlir_ciface_main
    base_print("Pajama: Server listening on 127.0.0.1:7878")
 
   event_handlers = TcpEvents.new(
-     tcp_writable.fn_ref(),
+   #   tcp_writable.fn_ref(),
      tcp_data_received.fn_ref()
   )
 
