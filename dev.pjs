@@ -1,4 +1,3 @@
-#def_e print_class(sock SockaddrIn)
 def_e print_int(int Int)
 def_e print_bytes(byte_ptr BytePtr, int Int)
 
@@ -9,7 +8,6 @@ def_e pj_malloc_struct(name Str) -> BytePtr
 def_e pj_listen(pj_tcp_server TcpServer)
 def_e pj_poll(pj_tcp_server TcpServer)
 def_e pj_check_events(pj_tcp_server TcpServer, pj_tcp_events TcpEvents)
-# def_e pj_tcp_connection_write(pj_tcp_connection TcpConnection, str Str)
 def_e pj_tcp_connection_buffer(pj_tcp_connection TcpConnection, str Str)
 
 class Str
@@ -32,7 +30,6 @@ class Function
 end
 
 class TcpEvents
-   # @tcp_writable_fn      FnRef
    @tcp_data_received_fn FnRef
 end
 
@@ -70,9 +67,7 @@ class TcpServer
    end
 
    def check_events(tcp_events TcpEvents)
-   # def check_events(writable_fn FnRef)
       pj_check_events(self, tcp_events)
-      # pj_check_events(self, writable_fn)
    end
 end
 
@@ -89,16 +84,13 @@ end
 # end
 
 def tcp_data_received(conn TcpConnection, received_data Str)
-   # base_print("tcp_data_received called")
-   # base_print(received_data)
+   base_print("tcp_data_received called")
+   base_print(received_data)
 
    conn.write("HTTP/1.1 200 OK\r\n")
    conn.write("Content-Length: 13\r\n")
    conn.write("Connection: keep-alive\r\n\r\n")
    conn.write("Haalo, world!")
-
-   # conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nHello, world!")
-   #conn.write("HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\nHello, world!")
 end
 
 def _mlir_ciface_main
@@ -112,17 +104,18 @@ def _mlir_ciface_main
       pj_malloc_struct("IoBuffers"),
       0
    )
+
    server.listen()
 
    base_print("Pajama: Server listening on 127.0.0.1:7878")
 
-  event_handlers = TcpEvents.new(
-   #   tcp_writable.fn_ref(),
-     tcp_data_received.fn_ref()
-  )
+   event_handlers = TcpEvents.new(
+      #   tcp_writable.fn_ref(),
+      tcp_data_received.fn_ref()
+   )
 
-  loop {
+   loop {
       server.poll()
       server.check_events(event_handlers)
-  }
+   }
 end
