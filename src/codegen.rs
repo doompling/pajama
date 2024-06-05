@@ -1,5 +1,6 @@
 use crate::parser::{BaseType, Def, FnRef, Node, ParserResult};
-use crate::{mi_malloc, parser};
+use crate::{parser};
+// use crate::mi_malloc;
 use melior::dialect::llvm::attributes::{linkage, Linkage};
 use melior::dialect::llvm::AllocaOptions;
 use melior::dialect::scf;
