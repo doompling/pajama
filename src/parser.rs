@@ -1007,7 +1007,7 @@ impl<'a> Parser<'a> {
 
                 (id, false, 0)
             }
-            _ => return { Err("Expected identifier in prototype declaration.") },
+            _ => return Err("Expected identifier in prototype declaration."),
         };
 
         let mut id = id;

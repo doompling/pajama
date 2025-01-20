@@ -350,7 +350,6 @@ fn handle_connection_event(
         }
     }
 
-
     if event.is_writable() {
         // (pj_tcp_events.tcp_writable_fn)(&pj_tcp_connection);
         pj_tcp_connection_flush(connection, event, &pj_tcp_server);
@@ -360,33 +359,35 @@ fn handle_connection_event(
 }
 
 #[used]
-static EXTERNAL_FNS17: [extern "C" fn(&mut PjTcpConnection, &PjStr); 1] = [pj_tcp_connection_buffer];
+static EXTERNAL_FNS17: [extern "C" fn(&mut PjTcpConnection, &PjStr); 1] =
+    [pj_tcp_connection_buffer];
 
 #[no_mangle]
-pub extern "C" fn pj_tcp_connection_buffer(pj_tcp_connection: &mut PjTcpConnection, pj_str: &PjStr) {
+pub extern "C" fn pj_tcp_connection_buffer(
+    pj_tcp_connection: &mut PjTcpConnection,
+    pj_str: &PjStr,
+) {
     pjstr_to_str(pj_str).as_bytes().iter().for_each(|b| {
         let buffer = unsafe { pj_tcp_connection.buffer.as_mut().unwrap() };
         buffer.push(*b);
     });
 }
 
-
 #[used]
-static EXTERNAL_FNS20: [extern "C" fn(&mut TcpStream, &Event, &PjTcpServer); 1] = [pj_tcp_connection_flush];
+static EXTERNAL_FNS20: [extern "C" fn(&mut TcpStream, &Event, &PjTcpServer); 1] =
+    [pj_tcp_connection_flush];
 
 #[no_mangle]
-pub extern "C" fn pj_tcp_connection_flush(connection: &mut TcpStream, event: &Event, pj_tcp_server: &PjTcpServer) {
+pub extern "C" fn pj_tcp_connection_flush(
+    connection: &mut TcpStream,
+    event: &Event,
+    pj_tcp_server: &PjTcpServer,
+) {
     let buffers = unsafe { pj_tcp_server.buffers.as_mut().unwrap() };
     let buffer = buffers.get_mut(&event.token()).unwrap();
 
     // let connection = unsafe { pj_tcp_connection.tcp_stream.as_mut().unwrap() };
-    let registry = unsafe {
-        pj_tcp_server
-            .poll
-            .as_ref()
-            .unwrap()
-    }
-    .registry();
+    let registry = unsafe { pj_tcp_server.poll.as_ref().unwrap() }.registry();
     // let event = unsafe { pj_tcp_connection.event.as_ref().unwrap() };
 
     // let slice = unsafe {
