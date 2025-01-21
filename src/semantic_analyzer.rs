@@ -207,8 +207,8 @@ fn run_type_inference(
                     Node::Def(_) => todo!(),
                     Node::DefE(_) => todo!(),
                     Node::Impl(_) => todo!(),
-                    Node::Int(_) => todo!(),
-                    Node::StringLiteral(_) => todo!(),
+                    Node::Int(_) => {},
+                    Node::StringLiteral(_) => {},
                     Node::LocalVar(node) => {
                         match node.return_type {
                             Some(_) => {}

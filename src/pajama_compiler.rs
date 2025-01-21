@@ -64,7 +64,11 @@ impl PajamaCompiler {
         println!("POST VERIFICATION:");
         println!("{}", mlir_module.body().to_string());
 
-        mlir_module.body().to_string()
+        let body = mlir_module.body().to_string();
+
+        // For some reason spaces are being added to the ends of some lines
+        // Maybe because of the extra spaces from `macro_rules! build_test_fn {` ?
+        body.replace(" \n", "\n")
 
         // PajamaCompiler::invoke(&mlir_module);
     }
@@ -115,6 +119,9 @@ impl PajamaCompiler {
         pass_manager.run(&mut mlir_module).unwrap();
 
         assert!(mlir_module.as_operation().verify());
+
+        println!("POST VERIFICATION:");
+        println!("{}", mlir_module.body().to_string());
 
         PajamaCompiler::invoke(&mlir_module);
     }
