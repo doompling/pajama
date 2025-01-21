@@ -119,3 +119,7 @@ def _mlir_ciface_main
       server.check_events(event_handlers)
    }
 end
+
+# def _mlir_ciface_main
+#    a = 1
+# end
