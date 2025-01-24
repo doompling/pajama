@@ -1932,7 +1932,20 @@ impl<'c, 'm> Compiler<'c, 'm> {
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
         println!("{:#?}", binary);
-        todo!()
+
+        let left_val = self.compile_expr(block, &binary.left, ctx, mctx).unwrap();
+        let right_val = self.compile_expr(block, &binary.right, ctx, mctx).unwrap();
+
+        // todo: Hardcoded + op for the moment, match on operator
+        let sum = block.append_operation(arith::addi(
+            left_val.unwrap().into(),
+            right_val.unwrap().into(),
+            Location::unknown(&self.context),
+        ))            .result(0)
+        .unwrap()
+        .into();
+
+        return Ok(Some(sum));
     }
 
     fn compile_local_var<'a>(
@@ -2750,7 +2763,10 @@ impl<'c, 'm> Compiler<'c, 'm> {
             Node::AssignAttributeAccess(_) => todo!(),
             Node::AssignLocalVar(_) => todo!(),
             Node::Attribute(_) => todo!(),
-            Node::Binary(_) => todo!(),
+            Node::Binary(_) => {
+                // todo: hardcoded to int
+                Some(BaseType::Int64)
+            },
             Node::Call(call_node) => call_node.return_type.clone(),
             Node::Class(_) => todo!(),
             Node::Const(const_node) => {

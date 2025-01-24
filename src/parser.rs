@@ -312,7 +312,7 @@ pub struct ParserFunctionCtx {
 pub struct Parser<'a> {
     pub tokens: Vec<Token>,
     pub pos: usize,
-    pub op_precedence: &'a mut HashMap<char, i32>,
+    pub op_precedence: &'a mut HashMap<[char; 4], i32>,
     pub index: ParserResultIndex,
 }
 
@@ -329,7 +329,7 @@ impl<'a> Parser<'a> {
     //     }
     // }
 
-    pub fn start_parse(tokens: Vec<Token>, op_precedence: &mut HashMap<char, i32>) -> ParserResult {
+    pub fn start_parse(tokens: Vec<Token>, op_precedence: &mut HashMap<[char; 4], i32>) -> ParserResult {
         let mut parser = Parser {
             tokens,
             op_precedence,
@@ -1227,8 +1227,12 @@ impl<'a> Parser<'a> {
         };
 
         let mut name = String::from("unary");
+        let op_name: String = op
+            .iter() // Create an iterator over the array
+            .filter(|&&c| c != '\0') // Exclude null characters
+            .collect();
 
-        name.push(op);
+        name.push_str(&op_name);
 
         Ok(Node::Call(Call {
             fn_name: name,
@@ -1454,6 +1458,10 @@ impl<'a> Parser<'a> {
                                                     Box::new(array.item_type.clone()),
                                                 )),
                                             }))
+                                        }
+                                        Node::Binary(binary) => {
+                                            // todo: Only Int is currently supported
+                                            "Int".to_string()
                                         }
                                         _ => {
                                             println!("{:#?}", asgnLvar.value.as_ref());
@@ -1839,45 +1847,12 @@ impl<'a> Parser<'a> {
                 return Ok(left);
             }
 
-            let mut op: [char; 4] = ['\0'; 4];
-
-            // Single char op
-            match self.curr() {
-                Token::Op(op_part) => op[0] = op_part,
+            let op = match self.curr() {
+                Token::Op(op) => op,
                 _ => return Err("Invalid operator."),
             };
 
             self.advance()?;
-            self.advance_optional_whitespace();
-
-            // Two char op
-            match self.curr() {
-                Token::Op(op_part) => {
-                    op[1] = op_part;
-                    self.advance()?;
-
-                    // Three char op
-                    match self.curr() {
-                        Token::Op(op_part) => {
-                            op[2] = op_part;
-                            self.advance()?;
-
-                            // Four char op
-                            match self.curr() {
-                                Token::Op(op_part) => {
-                                    op[3] = op_part;
-                                    self.advance()?;
-                                },
-                                _ => {},
-                            };
-
-                        },
-                        _ => {},
-                    };
-                },
-                _ => {},
-            };
-
             self.advance_optional_whitespace();
 
             let mut right = self.parse_unary_expr(mctx, ctx)?;

@@ -155,14 +155,16 @@ impl PajamaCompiler {
         context
     }
 
-    fn build_op_precedence_map() -> HashMap<char, i32> {
+    fn build_op_precedence_map() -> HashMap<[char; 4], i32> {
         let mut op_precedence_map = HashMap::with_capacity(6);
 
-        op_precedence_map.insert('<', 10);
-        op_precedence_map.insert('+', 20);
-        op_precedence_map.insert('-', 20);
-        op_precedence_map.insert('*', 40);
-        op_precedence_map.insert('/', 40);
+        op_precedence_map.insert(['<', '\0', '\0', '\0'], 10); // Example precedence for '<'
+        op_precedence_map.insert(['+', '\0', '\0', '\0'], 20); // Addition
+        op_precedence_map.insert(['-', '\0', '\0', '\0'], 20); // Subtraction
+        op_precedence_map.insert(['*', '\0', '\0', '\0'], 40); // Multiplication
+        op_precedence_map.insert(['/', '\0', '\0', '\0'], 40); // Division
+        op_precedence_map.insert(['%', '\0', '\0', '\0'], 40); // Modulo
+        op_precedence_map.insert(['^', '\0', '\0', '\0'], 50); // Exponentiation (e.g., '**')
 
         op_precedence_map
     }

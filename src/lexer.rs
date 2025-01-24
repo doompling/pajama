@@ -29,7 +29,7 @@ pub enum Token {
     LSquareBrace,
     NewLine(usize),
     Number(TokenPosition, u64),
-    Op(char),
+    Op([char; 4]),
     RCurlyBrace,
     Ret,
     RParen,
@@ -384,21 +384,38 @@ impl Lexer<'_> {
             //
             // Lexing only supports a single Char, so to handle operators like
             // `**` for exponent it will lexed as two multiplications
-            '+' => Token::Op('+'),
-            '*' => Token::Op('*'),
-            '/' => Token::Op('/'),
-            '%' => Token::Op('%'),
-            '>' => Token::Op('>'),
+            '+' => Token::Op(['+', '\0', '\0', '\0']),
+            '*' => {
+                let next_chr = match self.chars.peek() {
+                    Some(ch) => *ch,
+                    None => return Some(Token::Op(['*', '\0', '\0', '\0'])),
+                };
+
+                if next_chr != '*' {
+                    self.char_pos = pos;
+                    return Some(Token::Op(['*', '\0', '\0', '\0']));
+                }
+
+                self.chars.next();
+
+                self.column_pos += 1;
+                pos += 1;
+
+                Token::Op(['*', '*', '\0', '\0'])
+            },
+            '/' => Token::Op(['/', '\0', '\0', '\0']),
+            '%' => Token::Op(['%', '\0', '\0', '\0']),
+            '>' => Token::Op(['>', '\0', '\0', '\0']),
 
             '-' => {
                 let next_chr = match self.chars.peek() {
                     Some(ch) => *ch,
-                    None => return Some(Token::Op('-')),
+                    None => return Some(Token::Op(['-', '\0', '\0', '\0'])),
                 };
 
                 if next_chr != '>' {
                     self.char_pos = pos;
-                    return Some(Token::Op('-'));
+                    return Some(Token::Op(['-', '\0', '\0', '\0']));
                 }
 
                 self.chars.next();
