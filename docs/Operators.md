@@ -2,7 +2,7 @@
 
 
 ## **Arithmetic Operators**
-- [ ] `+` Addition
+- [x] `+` Addition
 - [ ] `-` Subtraction
 - [ ] `*` Multiplication
 - [ ] `/` Division
