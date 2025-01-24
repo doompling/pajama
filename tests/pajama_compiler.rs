@@ -22,6 +22,11 @@ macro_rules! build_test_fn {
     };
 }
 
+
+//
+// Constant
+//
+
 build_test_fn! {
   int_constant,
   "1",
@@ -57,6 +62,10 @@ build_test_fn! {
       }
   "}
 }
+
+//
+// Assignment
+//
 
 build_test_fn! {
   int_assignment,
@@ -99,3 +108,10 @@ build_test_fn! {
       }
   "}
 }
+
+
+//
+// Operators
+//
+
+

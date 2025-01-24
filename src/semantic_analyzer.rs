@@ -540,7 +540,11 @@ fn visit_binary_node(
         Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
         Node::Call(node) => visit_call_node(attribute_index, method_index, lvar_index, node),
         Node::Send(node) => visit_send_node(attribute_index, method_index, lvar_index, node),
-        _ => todo!(),
+        Node::Int(_) => Some(BaseType::Int),
+        // _ => todo!(),
+        _ => {
+            todo!()
+        },
     };
 
     match binary_node.right.as_mut() {
@@ -548,8 +552,12 @@ fn visit_binary_node(
         Node::Binary(node) => visit_binary_node(attribute_index, method_index, lvar_index, node),
         Node::Call(node) => visit_call_node(attribute_index, method_index, lvar_index, node),
         Node::Send(node) => visit_send_node(attribute_index, method_index, lvar_index, node),
+        Node::Int(_) => Some(BaseType::Int),
         _ => todo!(),
     }
+
+    // todo maybe validate the operator here since now both the left and right
+    // types are known
 }
 
 fn visit_call_node(

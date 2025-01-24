@@ -59,7 +59,7 @@ pub struct AssignConstant {
 
 #[derive(Debug)]
 pub struct Binary {
-    pub op: char,
+    pub op: [char; 4],
     pub left: Box<Node>,
     pub right: Box<Node>,
 }
@@ -1839,12 +1839,45 @@ impl<'a> Parser<'a> {
                 return Ok(left);
             }
 
-            let op = match self.curr() {
-                Token::Op(op) => op,
+            let mut op: [char; 4] = ['\0'; 4];
+
+            // Single char op
+            match self.curr() {
+                Token::Op(op_part) => op[0] = op_part,
                 _ => return Err("Invalid operator."),
             };
 
             self.advance()?;
+            self.advance_optional_whitespace();
+
+            // Two char op
+            match self.curr() {
+                Token::Op(op_part) => {
+                    op[1] = op_part;
+                    self.advance()?;
+
+                    // Three char op
+                    match self.curr() {
+                        Token::Op(op_part) => {
+                            op[2] = op_part;
+                            self.advance()?;
+
+                            // Four char op
+                            match self.curr() {
+                                Token::Op(op_part) => {
+                                    op[3] = op_part;
+                                    self.advance()?;
+                                },
+                                _ => {},
+                            };
+
+                        },
+                        _ => {},
+                    };
+                },
+                _ => {},
+            };
+
             self.advance_optional_whitespace();
 
             let mut right = self.parse_unary_expr(mctx, ctx)?;

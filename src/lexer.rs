@@ -347,27 +347,6 @@ impl Lexer<'_> {
                 }
             }
 
-            '-' => {
-                let next_chr = match self.chars.peek() {
-                    Some(ch) => *ch,
-                    None => return Some(Token::Op('-')),
-                };
-
-                if next_chr != '>' {
-                    self.char_pos = pos;
-                    return Some(Token::Op('-'));
-                }
-
-                self.chars.next();
-
-                self.column_pos += 1;
-                pos += 1;
-
-                Token::Arrow
-            }
-
-            '>' => Token::Op('>'),
-
             '=' => Token::Assign,
 
             '@' => {
@@ -399,6 +378,35 @@ impl Lexer<'_> {
                 token_pos.end_column = self.column_pos;
 
                 Token::Attribute(token_pos, attr_name.to_string())
+            }
+
+            //// Operators
+            //
+            // Lexing only supports a single Char, so to handle operators like
+            // `**` for exponent it will lexed as two multiplications
+            '+' => Token::Op('+'),
+            '*' => Token::Op('*'),
+            '/' => Token::Op('/'),
+            '%' => Token::Op('%'),
+            '>' => Token::Op('>'),
+
+            '-' => {
+                let next_chr = match self.chars.peek() {
+                    Some(ch) => *ch,
+                    None => return Some(Token::Op('-')),
+                };
+
+                if next_chr != '>' {
+                    self.char_pos = pos;
+                    return Some(Token::Op('-'));
+                }
+
+                self.chars.next();
+
+                self.column_pos += 1;
+                pos += 1;
+
+                Token::Arrow
             }
 
             _ => {

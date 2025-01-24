@@ -1931,6 +1931,7 @@ impl<'c, 'm> Compiler<'c, 'm> {
         ctx: &mut FnCtx<'c, 'a>,
         mctx: &mut ModuleCtx,
     ) -> Result<Option<Value<'c, 'a>>, &'static str> {
+        println!("{:#?}", binary);
         todo!()
     }
 
