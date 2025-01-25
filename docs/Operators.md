@@ -6,7 +6,7 @@
 - [x] `-` Subtraction
 - [x] `*` Multiplication
 - [x] `/` Division
-- [ ] `%` Modulo/Remainder
+- [x] `%` Modulo/Remainder
 - [ ] `**` Exponentiation, e.g., \(2^{3}\)
 
 
