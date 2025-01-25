@@ -1960,6 +1960,13 @@ impl<'c, 'm> Compiler<'c, 'm> {
                     Location::unknown(&self.context),
                 ))            .result(0).unwrap() .into()
             }
+            ['/', '\0', '\0', '\0'] => {
+                block.append_operation(arith::divsi(
+                    left_val.unwrap().into(),
+                    right_val.unwrap().into(),
+                    Location::unknown(&self.context),
+                ))            .result(0).unwrap() .into()
+            }
             _ => {
                 panic!("Unhandled binary operator: {:#?}", binary.op)
             }

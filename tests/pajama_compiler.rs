@@ -160,6 +160,22 @@ build_test_fn! {
   "}
 }
 
+build_test_fn! {
+  divide_assignment,
+  "a = 2 / 1",
+  indoc! {"
+    ^bb0:
+      llvm.func @_mlir_ciface_main() {
+        %0 = llvm.mlir.constant(2 : i64) : i64
+        %1 = llvm.mlir.constant(1 : i64) : i64
+        %2 = llvm.mlir.constant(1 : i64) : i64
+        %3 = llvm.alloca %2 x i64 : (i64) -> !llvm.ptr<i64>
+        llvm.store %0, %3 : !llvm.ptr<i64>
+        llvm.return
+      }
+  "}
+}
+
 
 //
 // Operators
@@ -202,6 +218,19 @@ build_test_fn! {
         %0 = llvm.mlir.constant(2 : i64) : i64
         %1 = llvm.mlir.constant(2 : i64) : i64
         %2 = llvm.mlir.constant(4 : i64) : i64
+        llvm.return
+      }
+  "}
+}
+
+build_test_fn! {
+  divide_op,
+  "2 / 1",
+  indoc! {"
+    ^bb0:
+      llvm.func @_mlir_ciface_main() {
+        %0 = llvm.mlir.constant(2 : i64) : i64
+        %1 = llvm.mlir.constant(1 : i64) : i64
         llvm.return
       }
   "}
