@@ -1937,15 +1937,28 @@ impl<'c, 'm> Compiler<'c, 'm> {
         let right_val = self.compile_expr(block, &binary.right, ctx, mctx).unwrap();
 
         // todo: Hardcoded + op for the moment, match on operator
-        let sum = block.append_operation(arith::addi(
-            left_val.unwrap().into(),
-            right_val.unwrap().into(),
-            Location::unknown(&self.context),
-        ))            .result(0)
-        .unwrap()
-        .into();
 
-        return Ok(Some(sum));
+        let result = match binary.op {
+            ['+', '\0', '\0', '\0'] => {
+                block.append_operation(arith::addi(
+                    left_val.unwrap().into(),
+                    right_val.unwrap().into(),
+                    Location::unknown(&self.context),
+                ))            .result(0).unwrap() .into()
+            }
+            ['-', '\0', '\0', '\0'] => {
+                block.append_operation(arith::subi(
+                    left_val.unwrap().into(),
+                    right_val.unwrap().into(),
+                    Location::unknown(&self.context),
+                ))            .result(0).unwrap() .into()
+            }
+            _ => {
+                panic!("Unhandled binary operator: {:#?}", binary.op)
+            }
+        };
+
+        return Ok(Some(result));
     }
 
     fn compile_local_var<'a>(

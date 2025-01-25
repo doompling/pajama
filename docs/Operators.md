@@ -3,7 +3,7 @@
 
 ## **Arithmetic Operators**
 - [x] `+` Addition
-- [ ] `-` Subtraction
+- [x] `-` Subtraction
 - [ ] `*` Multiplication
 - [ ] `/` Division
 - [ ] `%` Modulo/Remainder
