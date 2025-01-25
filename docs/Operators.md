@@ -4,7 +4,7 @@
 ## **Arithmetic Operators**
 - [x] `+` Addition
 - [x] `-` Subtraction
-- [ ] `*` Multiplication
+- [x] `*` Multiplication
 - [ ] `/` Division
 - [ ] `%` Modulo/Remainder
 - [ ] `**` Exponentiation, e.g., \(2^{3}\)
